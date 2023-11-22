@@ -92,6 +92,7 @@ OpenChatKit .overflow-y-auto{height:500px}
     color: #fff !important;
     margin-top: 0;
     border-radius: 10px;
+    overflow: none
 }
 
 .disablegenerating div:first-child {
@@ -99,15 +100,15 @@ OpenChatKit .overflow-y-auto{height:500px}
 }
 
 gradio-app {
-    background: linear-gradient(to bottom, #86ccf5, #3273bf) !important;
-    padding: 3%;
+    # background: linear-gradient(to bottom, #86ccf5, #3273bf) !important;
+    # padding: 3%;
 }
 
 .gradio-container {
     margin: 0 auto !important;
     padding: 2% !important;
     background: #fff !important;
-    border-radius: 10px !important;
+    # border-radius: 10px !important;
 }
 
 footer {
@@ -191,5 +192,9 @@ footer {
 
 .btn-style:active {
     background: #3c94dc !important;
+}
+
+.app.svelte-1kyws56.svelte-1kyws56 {
+    min-width: -webkit-fill-available;
 }
 """

@@ -126,7 +126,7 @@ def main(external_config = None):
     )
 
     if config.get("torch_config", None) is None:
-        torch_config = common.TorchConfig(backend = "ccl" if device == "CPU" else None)
+        torch_config = common.TorchConfig(backend = "gloo" if device == "CPU" else None)
     else:
         customer_torch_config = config.get("torch_config")
         torch_config = common.TorchConfig(**customer_torch_config)

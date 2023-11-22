@@ -83,7 +83,7 @@ class ChatBotUI():
         head_node_ip: str,
         node_port: str,
         node_user_name: str,
-        venv_path: str,
+        conda_env_name: str,
         master_ip_port: str
     ):
         self._all_models = all_models
@@ -96,7 +96,7 @@ class ChatBotUI():
         self.head_node_ip = head_node_ip
         self.node_port = node_port
         self.user_name = node_user_name
-        self.venv_path = venv_path
+        self.conda_env_name = conda_env_name
         self.master_ip_port = master_ip_port
         self.ray_nodes = ray.nodes()
         self.ssh_connect = [None] * (len(self.ray_nodes)+1)
@@ -210,7 +210,6 @@ class ChatBotUI():
             yield [res[1], res[2]]
 
     def finetune(self, model_name, dataset, new_model_name, batch_size, num_epochs, max_train_step, lr, worker_num, cpus_per_worker):
-        print(f"\033[31m 'hi testing finetune here' \033[0m")
         origin_model_path = self._base_models[model_name]["model_id_or_path"]
         tokenizer_path = self._base_models[model_name]["tokenizer_name_or_path"]
         gpt_base_model = self._base_models[model_name].get("gpt_base_model")
@@ -365,9 +364,8 @@ class ChatBotUI():
         serve.shutdown()
     
     def get_ray_cluster(self):
-        command = self.venv_path + 'ray status'
+        command = self.conda_env_name + '/ray status'
         stdin, stdout, stderr = self.ssh_connect[-1].exec_command(command)
-        exit_status = stdout.channel.recv_exit_status()
         out = stdout.read().decode('utf-8')
         out_words = [word for word in out.split("\n") if 'CPU' in word][0]
         cpu_info = out_words.split(" ")[1].split("/")
@@ -382,11 +380,10 @@ class ChatBotUI():
         command = 'export TERM=xterm; echo $(top -n 1 -b | head -n 4 | tail -n 2)'
         stdin, stdout, stderr = self.ssh_connect[index].exec_command(command)
         out = stdout.read().decode('utf-8')
-
         out_words = out.split(" ")
         cpu_value = 100 - float(out_words[7])
-        total_memory = float(out_words[20].split('+')[0])
-        free_memory = float(out_words[21].split('+')[0])
+        total_memory = int(out_words[20].split('+')[0])
+        free_memory = int(out_words[21].split('+')[0])
         used_memory = 1 - free_memory/total_memory
         return cpu_memory_html.format(str(round(cpu_value, 1)), str(round(used_memory*100, 1)))
     
@@ -394,14 +391,14 @@ class ChatBotUI():
         serve.shutdown()
         if btn_txt=="Kill":
             index = int(index)
-            command = self.venv_path + '; ray stop'
+            command = 'conda activate ' + self.conda_env_name + '; ray stop'
             self.ssh_connect[index].exec_command(command)
             self.ray_nodes[index]["Alive"] = "False"
             time.sleep(2)
             return "Start", ""
         elif btn_txt=="Start":
             index = int(index)
-            command = self.venv_path + "; RAY_SERVE_ENABLE_EXPERIMENTAL_STREAMING=1 ray start --address=" + self.master_ip_port + r""" --resources='{"special_hardware": 4}'"""
+            command = "conda activate " + self.conda_env_name + "; RAY_SERVE_ENABLE_EXPERIMENTAL_STREAMING=1 ray start --address=" + self.master_ip_port + r""" --resources='{"special_hardware": 4}'"""
             self.ssh_connect[index].exec_command(command)
             self.ray_nodes[index]["Alive"] = "True"
             time.sleep(2)
@@ -650,7 +647,7 @@ if __name__ == "__main__":
     parser.add_argument("--finetune_checkpoint_path", default="", type=str, help="Where to save checkpoints.")
     parser.add_argument("--node_port", default="22", type=str, help="The node port that ssh connects.")
     parser.add_argument("--node_user_name", default="root", type=str, help="The node user name that ssh connects.")
-    parser.add_argument("--venv_path", default="ch/llm-ray-venv/bin/", type=str, help="The environment used to execute ssh commands.")
+    parser.add_argument("--conda_env_name", default="test_gradio", type=str, help="The environment used to execute ssh commands.")
     parser.add_argument("--master_ip_port", default="None", type=str, help="The ip:port of head node to connect when restart a worker node.")
     args = parser.parse_args()
 
@@ -697,7 +694,6 @@ if __name__ == "__main__":
         },
         "address": "auto",
         "_node_ip_address": "127.0.0.1",
-        # "_node_ip_address": "10.0.11.8"
     }
     context = ray.init(**ray_init_config)
     head_node_ip = context.get("address").split(":")[0]
@@ -705,5 +701,5 @@ if __name__ == "__main__":
     finetune_model_path = args.finetune_model_path
     finetune_checkpoint_path = args.finetune_checkpoint_path
 
-    ui = ChatBotUI(all_models, base_models, finetune_model_path, finetune_checkpoint_path, repo_path, default_data_path, config, head_node_ip, args.node_port, args.node_user_name, args.venv_path, args.master_ip_port)
+    ui = ChatBotUI(all_models, base_models, finetune_model_path, finetune_checkpoint_path, repo_path, default_data_path, config, head_node_ip, args.node_port, args.node_user_name, args.conda_env_name, args.master_ip_port)
     ui.gr_chat.queue(concurrency_count=10).launch(share=True, server_port=8080, server_name="0.0.0.0")
