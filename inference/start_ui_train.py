@@ -18,9 +18,6 @@ from ray.util import queue
 import paramiko
 from html_format import cpu_memory_html, ray_status_html, custom_css
 from typing import Any, Dict
-# import logging
-# logging.basicConfig(level=logging.DEBUG) 
-# paramiko.util.log_to_file('paramiko.log')
 
 class CustomStopper(Stopper):
     def __init__(self):
@@ -84,7 +81,8 @@ class ChatBotUI():
         node_port: str,
         node_user_name: str,
         venv_path: str,
-        master_ip_port: str
+        master_ip_port: str,
+        inference_tab: bool
     ):
         self._all_models = all_models
         self._base_models = base_models
@@ -108,6 +106,7 @@ class ChatBotUI():
         self.process_tool = None
         self.finetune_actor = None
         self.finetune_status = False
+        self.inference_tab = inference_tab
 
         self._init_ui()
 
@@ -210,7 +209,6 @@ class ChatBotUI():
             yield [res[1], res[2]]
 
     def finetune(self, model_name, dataset, new_model_name, batch_size, num_epochs, max_train_step, lr, worker_num, cpus_per_worker):
-        print(f"\033[31m 'hi testing finetune here' \033[0m")
         origin_model_path = self._base_models[model_name]["model_id_or_path"]
         tokenizer_path = self._base_models[model_name]["tokenizer_name_or_path"]
         gpt_base_model = self._base_models[model_name].get("gpt_base_model")
@@ -494,26 +492,27 @@ class ChatBotUI():
                     with gr.Column(scale=1):
                         deployed_model_endpoint = gr.Text(label="Deployed Model Endpoint", value="")
 
-            with gr.Tab("Inference"):
-                step3 = "Access the online inference service in your own application"
-                gr.HTML("<h3 style='text-align: left; margin-bottom: 1rem'>"+ step3 + "</h3>")
-                with gr.Accordion("Configuration", open=False, visible=True):
-                    max_new_tokens = gr.Slider(1, 2000, 128, step=1, interactive=True, label="Max New Tokens", info="The maximum numbers of tokens to generate.")
-                    Temperature = gr.Slider(0, 1, 0.7, step=0.01, interactive=True, label="Temperature", info="The value used to modulate the next token probabilities.")
-                    Top_p = gr.Slider(0, 1, 1.0, step=0.01, interactive=True, label="Top p", info="If set to float < 1, only the smallest set of most probable tokens with probabilities that add up to`Top p` or higher are kept for generation.")
-                    Top_k = gr.Slider(0, 100, 0, step=1, interactive=True, label="Top k", info="The number of highest probability vocabulary tokens to keep for top-k-filtering.")
-                
-                with gr.Tab("Dialogue"):
-                    chatbot = gr.Chatbot(elem_id="chatbot", label="chatbot")
+            if self.inference_tab:
+                with gr.Tab("Inference"):
+                    step3 = "Access the online inference service in your own application"
+                    gr.HTML("<h3 style='text-align: left; margin-bottom: 1rem'>"+ step3 + "</h3>")
+                    with gr.Accordion("Configuration", open=False, visible=True):
+                        max_new_tokens = gr.Slider(1, 2000, 128, step=1, interactive=True, label="Max New Tokens", info="The maximum numbers of tokens to generate.")
+                        Temperature = gr.Slider(0, 1, 0.7, step=0.01, interactive=True, label="Temperature", info="The value used to modulate the next token probabilities.")
+                        Top_p = gr.Slider(0, 1, 1.0, step=0.01, interactive=True, label="Top p", info="If set to float < 1, only the smallest set of most probable tokens with probabilities that add up to`Top p` or higher are kept for generation.")
+                        Top_k = gr.Slider(0, 100, 0, step=1, interactive=True, label="Top k", info="The number of highest probability vocabulary tokens to keep for top-k-filtering.")
+                    
+                    with gr.Tab("Dialogue"):
+                        chatbot = gr.Chatbot(elem_id="chatbot", label="chatbot")
 
-                    with gr.Row():
-                        with gr.Column(scale=0.6):
-                            msg = gr.Textbox(show_label=False, container=False,
-                                            placeholder="Input your question and press Enter")
-                        with gr.Column(scale=0.2, min_width=0):
-                            send_btn = gr.Button("Send")
-                        with gr.Column(scale=0.2, min_width=0):
-                            clear_btn = gr.Button("Clear")
+                        with gr.Row():
+                            with gr.Column(scale=0.6):
+                                msg = gr.Textbox(show_label=False, container=False,
+                                                placeholder="Input your question and press Enter")
+                            with gr.Column(scale=0.2, min_width=0):
+                                send_btn = gr.Button("Send")
+                            with gr.Column(scale=0.2, min_width=0):
+                                clear_btn = gr.Button("Clear")
 
 
                     with gr.Row():
@@ -522,28 +521,28 @@ class ChatBotUI():
                         with gr.Column(scale=0.1):
                             model_used = gr.Text(label="Inference Model", value="", visible=False)
 
-                with gr.Tab("Multi-Session"):
-                    scale_num = 1 / self.test_replica
-                    with gr.Row():
-                        chatbots = list(range(self.test_replica))
-                        msgs = list(range(self.test_replica))
-                        for i in range(self.test_replica):
-                            with gr.Column(scale=scale_num, min_width=1):
-                                chatbots[i] = gr.Chatbot(elem_id="chatbot"+str(i+1), label="chatbot"+str(i+1), min_width=1)
-                                msgs[i] = gr.Textbox(show_label=False, container=False,
-                                                placeholder="Input your question and press Enter",
-                                                value=self.messages[i], min_width=1)
-                    with gr.Row(visible=False):
-                        ids = list(range(self.test_replica))
-                        for i in range(self.test_replica):
-                            with gr.Column(scale=scale_num):
-                                ids[i] = gr.Text(value=str(i), visible=False)
+                    with gr.Tab("Multi-Session"):
+                        scale_num = 1 / self.test_replica
+                        with gr.Row():
+                            chatbots = list(range(self.test_replica))
+                            msgs = list(range(self.test_replica))
+                            for i in range(self.test_replica):
+                                with gr.Column(scale=scale_num, min_width=1):
+                                    chatbots[i] = gr.Chatbot(elem_id="chatbot"+str(i+1), label="chatbot"+str(i+1), min_width=1)
+                                    msgs[i] = gr.Textbox(show_label=False, container=False,
+                                                    placeholder="Input your question and press Enter",
+                                                    value=self.messages[i], min_width=1)
+                        with gr.Row(visible=False):
+                            ids = list(range(self.test_replica))
+                            for i in range(self.test_replica):
+                                with gr.Column(scale=scale_num):
+                                    ids[i] = gr.Text(value=str(i), visible=False)
 
-                    with gr.Row():
-                        with gr.Column(scale=0.5):
-                            send_all_btn = gr.Button("Send all requsts")
-                        with gr.Column(scale=0.5):
-                            reset_all_btn = gr.Button("Reset")
+                        with gr.Row():
+                            with gr.Column(scale=0.5):
+                                send_all_btn = gr.Button("Send all requsts")
+                            with gr.Column(scale=0.5):
+                                reset_all_btn = gr.Button("Reset")
             
             with gr.Accordion("Cluster Status", open=False, visible=True):
                 with gr.Row():
@@ -612,24 +611,25 @@ class ChatBotUI():
                                         func = lambda: self.get_cpu_memory(index=3)
                                     gr.HTML(func, elem_classes="disablegenerating", every=2)
 
-            msg.submit(self.user, [msg, chatbot], [msg, chatbot], queue=False).then(
-                self.bot, [chatbot, deployed_model_endpoint, max_new_tokens, Temperature, Top_p, Top_k],
-                           [chatbot, latency]
-            )
-            clear_btn.click(self.clear, None, chatbot, queue=False)
-
-            send_btn.click(self.user, [msg, chatbot], [msg, chatbot], queue=False).then(
-                self.bot, [chatbot, deployed_model_endpoint, max_new_tokens, Temperature, Top_p, Top_k],
-                           [chatbot, latency]
-            )
-
-            for i in range(self.test_replica):
-                send_all_btn.click(self.user, [msgs[i], chatbots[i]], [msgs[i], chatbots[i]], queue=False).then(
-                    self.send_all_bot, [ids[i], chatbots[i], deployed_model_endpoint, max_new_tokens, Temperature, Top_p, Top_k],
-                    [chatbots[i], latency]
+            if self.inference_tab:
+                msg.submit(self.user, [msg, chatbot], [msg, chatbot], queue=False).then(
+                    self.bot, [chatbot, deployed_model_endpoint, max_new_tokens, Temperature, Top_p, Top_k],
+                            [chatbot, latency]
                 )
-            for i in range(self.test_replica):
-                reset_all_btn.click(self.reset, [ids[i]], [msgs[i], chatbots[i]], queue=False)
+                clear_btn.click(self.clear, None, chatbot, queue=False)
+
+                send_btn.click(self.user, [msg, chatbot], [msg, chatbot], queue=False).then(
+                    self.bot, [chatbot, deployed_model_endpoint, max_new_tokens, Temperature, Top_p, Top_k],
+                            [chatbot, latency]
+                )
+
+                for i in range(self.test_replica):
+                    send_all_btn.click(self.user, [msgs[i], chatbots[i]], [msgs[i], chatbots[i]], queue=False).then(
+                        self.send_all_bot, [ids[i], chatbots[i], deployed_model_endpoint, max_new_tokens, Temperature, Top_p, Top_k],
+                        [chatbots[i], latency]
+                    )
+                for i in range(self.test_replica):
+                    reset_all_btn.click(self.reset, [ids[i]], [msgs[i], chatbots[i]], queue=False)
             
             for i in range(len(stop_btn)):
                 stop_btn[i].click(self.kill_node, [stop_btn[i], node_index[i]], [stop_btn[i], deployed_model_endpoint])
@@ -697,7 +697,6 @@ if __name__ == "__main__":
         },
         "address": "auto",
         "_node_ip_address": "127.0.0.1",
-        # "_node_ip_address": "10.0.11.8"
     }
     context = ray.init(**ray_init_config)
     head_node_ip = context.get("address").split(":")[0]
@@ -705,5 +704,5 @@ if __name__ == "__main__":
     finetune_model_path = args.finetune_model_path
     finetune_checkpoint_path = args.finetune_checkpoint_path
 
-    ui = ChatBotUI(all_models, base_models, finetune_model_path, finetune_checkpoint_path, repo_path, default_data_path, config, head_node_ip, args.node_port, args.node_user_name, args.venv_path, args.master_ip_port)
+    ui = ChatBotUI(all_models, base_models, finetune_model_path, finetune_checkpoint_path, repo_path, default_data_path, config, head_node_ip, args.node_port, args.node_user_name, args.venv_path, args.master_ip_port, False)
     ui.gr_chat.queue(concurrency_count=10).launch(share=True, server_port=8080, server_name="0.0.0.0")
