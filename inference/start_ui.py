@@ -210,7 +210,6 @@ class ChatBotUI():
             yield [res[1], res[2]]
 
     def finetune(self, model_name, dataset, new_model_name, batch_size, num_epochs, max_train_step, lr, worker_num, cpus_per_worker):
-        print(f"\033[31m 'hi testing finetune here' \033[0m")
         origin_model_path = self._base_models[model_name]["model_id_or_path"]
         tokenizer_path = self._base_models[model_name]["tokenizer_name_or_path"]
         gpt_base_model = self._base_models[model_name].get("gpt_base_model")

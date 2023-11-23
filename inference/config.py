@@ -55,8 +55,8 @@ gpt_j_6B = {
 }
 
 gpt2 = {
-    "model_id_or_path": "gpt2",
-    "tokenizer_name_or_path": "gpt2",
+    "model_id_or_path": "/root/ch/huggingface/gpt2",
+    "tokenizer_name_or_path": "/root/ch/huggingface/gpt2",
     "port": "8000",
     "name": "gpt2",
     "route_prefix": "/gpt2",
