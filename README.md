@@ -45,7 +45,9 @@ Workflow has been tested on Linux-4.18.0-408.el8.x86_64 and Ubuntu 22.04
 ```bash
 git clone https://github.com/intel-sandbox/llm-ray.git
 cd llm-ray
-pip install -r ./requirements.txt -f https://developer.intel.com/ipex-whl-stable-cpu -f https://download.pytorch.org/whl/torch_stable.html
+pip install .[cpu] -f https://developer.intel.com/ipex-whl-stable-cpu -f https://download.pytorch.org/whl/torch_stable.html
+# Dynamic link oneCCL and Intel MPI libraries
+source $(python -c "import oneccl_bindings_for_pytorch as torch_ccl;print(torch_ccl.cwd)")/env/setvars.sh
 ```
 
 #### 2. Launch ray cluster
@@ -64,18 +66,23 @@ If deploying a ray cluster on multiple nodes, please download the workflow repos
 
 #### 1. Prepare Dataset
 
-Now, the workflow only supports datasets in the specified format
+The workflow only supports datasets with JSONL (JSON Lines) format, where each line is a separate JSON object. Here’s the structure each line should follow:
 
-The format of dataset similar to [databricks/databricks-dolly-15k](https://huggingface.co/datasets/databricks/databricks-dolly-15k). This type of data is used for finetuning in prompt mode and this type of data is characterized by containing `instruction` `context` and `response` fields where `instruction` and `response` are required fields and `context` is an optional field. In the data preprocessing stage, the three fields will be concatenated to the corresponding format according to [dolly](https://github.com/databrickslabs/dolly/blob/master/training/trainer.py#LL93).
+``` json
+{"instruction":"<User Input>", "context":"<Additional Information>", "response":"<Expected Output>"}
+```
 
+- Instruction: This is the user's input, such as a question, command, or prompt for content generation.
+- Context: Supplementary information that aids the instruction. This can include previous conversation parts, background details, or specificities influencing the response. It's optional and can be left empty.
+- Response: The model's expected output in response to the 'instruction', considering the 'context' if provided.
 
-The meaning of the above three columns:
-+ Instruction Column: The column in the dataset is the user input, such as a question or a command.
-+ Context Column: This column is other information used by instruction, such as the options used in the question and so on. It can be empty.
-+ Response: The column in the dataset containing the expected output.
+##### Examples:
+``` json
+{"instruction":"Which is a species of fish? Tope or Rope", "context":"", "response":"Tope"}
+{"instruction":"What is the average lifespan of a Golden Retriever?","context":"Golden Retrievers are a generally healthy breed; they have an average lifespan of 12 to 13 years. Irresponsible breeding to meet high demand has led to the prevalence of inherited health problems in some breed lines, including allergic skin conditions, eye problems and sometimes snappiness. These problems are rarely encountered in dogs bred from responsible breeders.","response":"The average lifespan of a Golden Retriever is 12 to 13 years."}
+```
 
-
-Therefore, if the your data meets the above two formats, you can use the data by configuring the local data path or huggingface dataset. If not, please refer to the following **Adopt to Your Dataset**.
+An example dataset can be accessed at `examples/data/sample_finetune_data.jsonl`. Ensure each line in your dataset follows the above format.
 
 #### 2. Finetune
 
@@ -147,15 +154,16 @@ A specific model can be deployed by specifying the model path and tokenizer path
 # If you dont' want to view serve logs, you can set env var, "KEEP_SERVE_TERMINAL" to false
 
 # Run model serve with specified model and tokenizer
-python inference/run_model_serve.py --model $model --tokenizer $tokenizer --streaming_response
+python inference/run_model_serve.py --model $model --tokenizer $tokenizer
 
 # INFO - Deployment 'custom-model_PredictDeployment' is ready at `http://127.0.0.1:8000/custom-model`. component=serve deployment=custom-model_PredictDeployment
 # Service is deployed successfully
 
 # Verfiy the inference on deployed model
-python inference/run_model_infer.py --model_endpoint http://127.0.0.1:8000/custom-model
+python inference/run_model_infer.py --model_endpoint http://127.0.0.1:8000/custom-model --streaming_response
 ```
-Otherwise, all the models configured in `inference/config.py` will be deployed by default. If you want to choose a specific model to deploy, you can set env var, "MODEL_TO_SERVE", to your choice. You can add customized models in it as needed.
+Otherwise, all the models placed under `inference/models` folder will be deployed by default. If you want to choose a specific model to deploy, you can set env var, "MODEL_TO_SERVE", to your choice. You can also specify your model by either `--model` or `--config_file`.
+For `--config_file`, you can copy one of them from `inference/models` and make necessary changes.
 
 Llm-ray also supports serving with deepspeed. Please follow the [guide](inference/deepspeed/README.md) under inference/deepspeed folder.
 

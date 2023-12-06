@@ -8,15 +8,13 @@ from queue import Empty
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
 from transformers import StoppingCriteria, StoppingCriteriaList
-import intel_extension_for_pytorch as ipex
-from config import all_models
+from inference_config import ModelDescription, InferenceConfig, all_models
 import sys
 
 from typing import Generator, Union, Optional, List
 from starlette.responses import StreamingResponse
 
-from transformer_predictor import TransformerPredictor
-from deepspeed_predictor import DeepSpeedPredictor
+from pydantic_yaml import parse_yaml_raw_as
 
 class StoppingCriteriaSub(StoppingCriteria):
 
@@ -31,34 +29,53 @@ class StoppingCriteriaSub(StoppingCriteria):
                 return True
         return False
 
+def max_input_len(input_text_length):
+    if input_text_length <= 128:
+        return 128
+    elif input_text_length <= 512:
+        return 512
+    elif input_text_length <= 2048:
+        return 2048
+    else:
+        print("Max support length is 4096")
+        return 4096
 
 @serve.deployment
 class PredictDeployment:
-    def __init__(self, model_id, tokenizer_name_or_path, model_load_config, device_name, amp_enabled, amp_dtype, chat_processor_name, prompt,
-                 ipex_enabled=False, deployment_mode=False, deepspeed_enabled=False, cpus_per_worker=1, gpus_per_worker=0, workers_per_group=2, deltatuner_model_id=None):
-        self.device_name = device_name
-        self.device = torch.device(device_name)
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path)
+    def __init__(self, inferenceConfig: InferenceConfig):
+        if inferenceConfig.ipex:
+            import intel_extension_for_pytorch as ipex
+        self.device = torch.device(inferenceConfig.device)
+        self.tokenizer = AutoTokenizer.from_pretrained(inferenceConfig.model_description.tokenizer_name_or_path)
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
         self.process_tool = None
-        if chat_processor_name is not None:
+        chat_processor_name = inferenceConfig.model_description.chat_processor
+        prompt = inferenceConfig.model_description.prompt
+        if chat_processor_name:
             module = __import__("chat_process")
             chat_processor = getattr(module, chat_processor_name, None)
             if chat_processor is None:
-                raise ValueError(model_id + " deployment failed. chat_processor(" + chat_processor_name + ") does not exist.")
-            self.process_tool = chat_processor(**prompt)
-        stop_words = prompt["stop_words"]
+                raise ValueError(inferenceConfig.name + " deployment failed. chat_processor(" + chat_processor_name + ") does not exist.")
+            self.process_tool = chat_processor(**prompt.dict())
+        stop_words = prompt.stop_words
         stop_words_ids = [self.tokenizer(stop_word, return_tensors='pt').input_ids.squeeze() for stop_word in stop_words]
         self.stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stop_words_ids)])
-        self.use_deepspeed = deepspeed_enabled
+        self.use_deepspeed = inferenceConfig.deepspeed
+        self.amp_dtype = torch.bfloat16 if inferenceConfig.precision != "fp32" else torch.float32
         if self.use_deepspeed:
+            from deepspeed_predictor import DeepSpeedPredictor
             self.streamer = self.create_streamer()
-            self.predictor = DeepSpeedPredictor(model_id, model_load_config, device_name, amp_enabled, amp_dtype, self.tokenizer.pad_token_id, self.stopping_criteria,
-                                                ipex_enabled, deployment_mode, cpus_per_worker, gpus_per_worker, workers_per_group, deltatuner_model_id)
+            # now deepspeed predictor don't have the model
+            # this should be solved in the next pr
+            # where it is also a worker
+            if self.tokenizer.pad_token_id is None:
+                self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+            self.predictor = DeepSpeedPredictor(inferenceConfig, self.amp_dtype, self.tokenizer.pad_token_id, self.stopping_criteria)
         else:
-            self.predictor = TransformerPredictor(model_id, model_load_config, device_name, amp_enabled, amp_dtype, self.tokenizer.pad_token_id, self.stopping_criteria,
-                                                  ipex_enabled, deployment_mode, deltatuner_model_id)
+            from transformer_predictor import TransformerPredictor
+            self.predictor = TransformerPredictor(inferenceConfig, self.amp_dtype, self.stopping_criteria)
+            self.predictor.configure_tokenizer(inferenceConfig.model_description.model_id_or_path, self.tokenizer)
         self.loop = asyncio.get_running_loop()
 
     def create_streamer(self):
@@ -92,10 +109,20 @@ class PredictDeployment:
         return RayTextIteratorStreamer(self.tokenizer, skip_special_tokens=True)
 
     def tokenize_inputs(self, text: List[str]):
-        input_tokens = self.tokenizer.batch_encode_plus(
-            text, return_tensors="pt", padding=True
-        )
-        input_token_len = input_tokens.input_ids.shape[-1]
+        if self.device.type == "hpu":
+            input_tokens_no_pad = self.tokenizer(text, return_tensors="pt")
+            input_token_len = input_tokens_no_pad.input_ids.shape[-1]
+            input_tokens = self.tokenizer.batch_encode_plus(
+                text,
+                return_tensors="pt",
+                padding="max_length",
+                max_length=max_input_len(input_token_len),
+            )
+        else:
+            input_tokens = self.tokenizer.batch_encode_plus(
+                text, return_tensors="pt", padding=True
+            )
+            input_token_len = input_tokens.input_ids.shape[-1]
         inputs = {k: v.to(device=self.device) \
                   for k,v in input_tokens.items() \
                   if torch.is_tensor(v)}
@@ -139,7 +166,7 @@ class PredictDeployment:
                     prompt = self.process_tool.get_prompt(text)
                     prompts.append(prompt)
                 else:
-                    prompts.extend(text)            
+                    prompts.extend(text)
             else:
                 prompts.append(text)
         if not streaming_response:
@@ -152,88 +179,83 @@ class PredictDeployment:
             self.loop.run_in_executor(None, functools.partial(self.predict_stream, prompts, streamer, **config))
             return StreamingResponse(self.consume_streamer_async(streamer), status_code=200, media_type="text/plain")
 
-if __name__ == "__main__":
+_ray_env_key = "env_vars"
+# OMP_NUM_THREADS will be set by num_cpus, so not set in env
+_predictor_runtime_env_ipex = {
+    "KMP_BLOCKTIME": "1",
+    "KMP_SETTINGS": "1",
+    "KMP_AFFINITY": "granularity=fine,compact,1,0",
+    "MALLOC_CONF": "oversize_threshold:1,background_thread:true,metadata_thp:auto,dirty_decay_ms:9000000000,muzzy_decay_ms:9000000000"
+}
 
+# make it unittest friendly
+def main(argv=None):
     # args
     import argparse
     parser = argparse.ArgumentParser("Model Serve Script", add_help=False)
-    parser.add_argument("--precision", default="bf16", type=str, help="fp32 or bf16")
+    parser.add_argument("--config_file", type=str, help="inference configuration file in YAML. If specified, all other arguments are ignored")
     parser.add_argument("--model", default=None, type=str, help="model name or path")
-    parser.add_argument("--deltatuner_model", default=None, type=str, help="deltatuner model name or path")
     parser.add_argument("--tokenizer", default=None, type=str, help="tokenizer name or path")
-    parser.add_argument("--port", default="8000", type=str, help="the port of deployment address")
+    parser.add_argument("--port", default=8000, type=int, help="the port of deployment address")
     parser.add_argument("--route_prefix", default="custom_model", type=str, help="the route prefix for HTTP requests.")
-    parser.add_argument("--chat_processor", default=None, type=str, help="how to process the prompt and output, \
-                        the value corresponds to class names in chat_process.py, only for chat version.")
-    parser.add_argument("--prompt", default=None, type=str, help="the specific format of prompt.")
-    parser.add_argument("--trust_remote_code", action='store_true', 
-                        help="Whether or not to allow for custom code defined on the Hub in their own modeling, configuration,\
-                            tokenization or even pipeline files.")
-    parser.add_argument("--use_auth_token", default=None, type=Optional[Union[bool, str]],
-                        help="The token to use as HTTP bearer authorization for remote files.")
     parser.add_argument("--cpus_per_worker", default="24", type=int, help="cpus per worker")
     parser.add_argument("--gpus_per_worker", default=0, type=float, help="gpus per worker, used when --device is cuda")
+    parser.add_argument("--hpus_per_worker", default=0, type=float, help="hpus per worker, used when --device is hpu")
     parser.add_argument("--deepspeed", action='store_true', help="enable deepspeed inference")
     parser.add_argument("--workers_per_group", default="2", type=int, help="workers per group, used with --deepspeed")
     parser.add_argument("--ipex", action='store_true', help="enable ipex optimization")
-    parser.add_argument("--deployment_mode", action="store_true", help="Whether to apply the optimized model for deployment \
-                        of model generation, only used when ipex optimization is True.")
-    parser.add_argument("--device", default="cpu", type=str, help="cpu, xpu or cuda")
+    parser.add_argument("--device", default="cpu", type=str, help="cpu, xpu, hpu or cuda")
+    parser.add_argument("--precision", default="bf16", type=str, help="fp32 or bf16")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    runtime_env = {
-        "env_vars": {
-            "KMP_BLOCKTIME": "1",
-            "KMP_SETTINGS": "1",
-            "KMP_AFFINITY": "granularity=fine,compact,1,0",
-            "OMP_NUM_THREADS": str(args.cpus_per_worker),
-            "DS_ACCELERATOR": args.device,
-            "MALLOC_CONF": "oversize_threshold:1,background_thread:true,metadata_thp:auto,dirty_decay_ms:9000000000,muzzy_decay_ms:9000000000",
-        }
-    }
-    ray.init(address="auto", runtime_env=runtime_env)
-
-    amp_enabled = True if args.precision != "fp32" else False
-    amp_dtype = torch.bfloat16 if args.precision != "fp32" else torch.float32
-
-    if args.model is None:
+    # serve all pre-defined models, or model from MODEL_TO_SERVE env, if no model argument specified
+    if args.model is None and args.config_file is None:
         model_list = all_models
     else:
-        model_list = {
-            "custom_model": {
-                "model_id_or_path": args.model,
-                "tokenizer_name_or_path": args.tokenizer if args.tokenizer is not None else args.model,
-                "port": args.port,
-                "name": args.route_prefix,
-                "route_prefix": "/{}".format(args.route_prefix),
-                "chat_processor": args.chat_processor,
-                "prompt": {
-                    "intro": "",
-                    "human_id": "",
-                    "bot_id": "",
-                    "stop_words": []
-                } if args.prompt is None else eval(args.prompt),
-                "config": {
-                    "trust_remote_code": args.trust_remote_code,
-                    "use_auth_token": args.use_auth_token
-                }
-            }
-        }
+        # config_file has precedence over others
+        if args.config_file:
+            print("reading from config file, " + args.config_file)
+            with open(args.config_file, "r") as f:
+                inferenceConfig = parse_yaml_raw_as(InferenceConfig, f)
+        else: # args.model should be set
+            print("reading from command line, " + args.model)
+            model_desc = ModelDescription()
+            model_desc.model_id_or_path = args.model
+            model_desc.tokenizer_name_or_path = args.tokenizer if args.tokenizer is not None else args.model
+            inferenceConfig = InferenceConfig(model_description=model_desc)
+            inferenceConfig.port = args.port
+            rp = args.route_prefix if args.route_prefix else "custom_model"
+            inferenceConfig.route_prefix = "/{}".format(rp)
+            inferenceConfig.name = rp
+            inferenceConfig.ipex = args.ipex
+        model_list = {}
+        model_list[inferenceConfig.name] = inferenceConfig
 
-    for model_id, model_config in model_list.items():
+    ray.init(address="auto")
+
+    deployments = []
+    for model_id, inferCfg in model_list.items():
         print("deploy model: ", model_id)
-        model_config["deltatuner_model_id_or_path"] = args.deltatuner_model
-        model_load_config = model_config.get("config", {})
-        deployment = PredictDeployment.options(ray_actor_options={"num_gpus": min(args.gpus_per_worker, 1)}).bind(
-                                            model_config["model_id_or_path"], model_config["tokenizer_name_or_path"], model_load_config,
-                                            args.device, amp_enabled, amp_dtype,
-                                            chat_processor_name = model_config["chat_processor"], prompt=model_config["prompt"],
-                                            ipex_enabled=args.ipex, deployment_mode=args.deployment_mode,
-                                            deepspeed_enabled=args.deepspeed, cpus_per_worker=args.cpus_per_worker,
-                                            gpus_per_worker=args.gpus_per_worker, workers_per_group=args.workers_per_group,
-                                            deltatuner_model_id=model_config["deltatuner_model_id_or_path"])
-        handle = serve.run(deployment, _blocking=True, port=model_config["port"], name=model_config["name"], route_prefix=model_config["route_prefix"])
+        runtime_env = {_ray_env_key: {}}
+        if inferCfg.ipex:
+            runtime_env[_ray_env_key].update(_predictor_runtime_env_ipex)
+        if inferCfg.deepspeed:
+            runtime_env[_ray_env_key]["DS_ACCELERATOR"] = inferCfg.device
+        # now PredictDeployment itself is a worker, we should require resources for it
+        ray_actor_options = {"runtime_env": runtime_env}
+        if inferCfg.device == "cpu":
+            ray_actor_options["num_cpus"] = inferCfg.cpus_per_worker
+        elif inferCfg.device == "cuda":
+            ray_actor_options["num_gpus"] = inferCfg.gpus_per_worker
+        elif inferCfg.device == "hpu":
+            ray_actor_options["resources"] = {"HPU": inferCfg.hpus_per_worker}
+        else:
+            # TODO add xpu
+            pass
+        deployment = PredictDeployment.options(ray_actor_options=ray_actor_options).bind(inferCfg)
+        handle = serve.run(deployment, _blocking=True, port=inferCfg.port, name=inferCfg.name, route_prefix=inferCfg.route_prefix)
+        deployments.append(handle)
 
     msg = "Service is deployed successfully"
     env_name = "KEEP_SERVE_TERMINAL"
@@ -241,4 +263,7 @@ if __name__ == "__main__":
         input(msg)
     else:
         print(msg)
+    return deployments
 
+if __name__ == "__main__":
+    main(sys.argv[1:])
