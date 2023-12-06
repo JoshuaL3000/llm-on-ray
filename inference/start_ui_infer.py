@@ -452,6 +452,25 @@ class ChatBotUI():
             notice = gr.Markdown(head_content, elem_classes="notice_markdown")
 
             if self.inference_tab:
+                with gr.Tab("Deployment"):
+                    step2 = "Deploy the finetuned model as an online inference service"
+                    gr.HTML("<h3 style='text-align: left; margin-bottom: 1rem'>"+ step2 + "</h3>")
+                    with gr.Row():
+                        with gr.Column(scale=0.8):
+                            all_models_list = list(self._all_models.keys())
+                            all_model_dropdown = gr.Dropdown(all_models_list, value=all_models_list[0],
+                                                        label="Select Model to Deploy")
+                        with gr.Column(scale=0.2, min_width=0):
+                            deploy_btn = gr.Button("Deploy")
+                            stop_deploy_btn = gr.Button("Stop")
+                    
+                    with gr.Accordion("Parameters", open=False, visible=True):
+                        replica_num = gr.Slider(1, 8, 4, step=1, interactive=True, label="Maximum Concurrent Requests")
+
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            deployed_model_endpoint = gr.Text(label="Deployed Model Endpoint", value="")
+
                 with gr.Tab("Inference"):
                     step3 = "Access the online inference service in your own application"
                     gr.HTML("<h3 style='text-align: left; margin-bottom: 1rem'>"+ step3 + "</h3>")
@@ -461,9 +480,9 @@ class ChatBotUI():
                         Top_p = gr.Slider(0, 1, 1.0, step=0.01, interactive=True, label="Top p", info="If set to float < 1, only the smallest set of most probable tokens with probabilities that add up to`Top p` or higher are kept for generation.")
                         Top_k = gr.Slider(0, 100, 0, step=1, interactive=True, label="Top k", info="The number of highest probability vocabulary tokens to keep for top-k-filtering.")
                     
-                    with gr.Row():
-                        with gr.Column(scale=1):
-                            deployed_model_endpoint = gr.Text(label="Deployed Model Endpoint", value="")
+                    # with gr.Row():
+                    #     with gr.Column(scale=1):
+                    #         deployed_model_endpoint = gr.Text(label="Deployed Model Endpoint", value="")
 
                     with gr.Tab("Dialogue"):
                         chatbot = gr.Chatbot(elem_id="chatbot", label="chatbot")
@@ -573,25 +592,24 @@ class ChatBotUI():
                                         func = lambda: self.get_cpu_memory(index=3)
                                     gr.HTML(func, elem_classes="disablegenerating", every=2)
 
-            if self.inference_tab:
-                msg.submit(self.user, [msg, chatbot], [msg, chatbot], queue=False).then(
-                    self.bot, [chatbot, deployed_model_endpoint, max_new_tokens, Temperature, Top_p, Top_k],
-                            [chatbot, latency]
-                )
-                clear_btn.click(self.clear, None, chatbot, queue=False)
+            msg.submit(self.user, [msg, chatbot], [msg, chatbot], queue=False).then(
+                self.bot, [chatbot, deployed_model_endpoint, max_new_tokens, Temperature, Top_p, Top_k],
+                        [chatbot, latency]
+            )
+            clear_btn.click(self.clear, None, chatbot, queue=False)
 
-                send_btn.click(self.user, [msg, chatbot], [msg, chatbot], queue=False).then(
-                    self.bot, [chatbot, deployed_model_endpoint, max_new_tokens, Temperature, Top_p, Top_k],
-                            [chatbot, latency]
-                )
+            send_btn.click(self.user, [msg, chatbot], [msg, chatbot], queue=False).then(
+                self.bot, [chatbot, deployed_model_endpoint, max_new_tokens, Temperature, Top_p, Top_k],
+                        [chatbot, latency]
+            )
 
-                for i in range(self.test_replica):
-                    send_all_btn.click(self.user, [msgs[i], chatbots[i]], [msgs[i], chatbots[i]], queue=False).then(
-                        self.send_all_bot, [ids[i], chatbots[i], deployed_model_endpoint, max_new_tokens, Temperature, Top_p, Top_k],
-                        [chatbots[i], latency]
-                    )
-                for i in range(self.test_replica):
-                    reset_all_btn.click(self.reset, [ids[i]], [msgs[i], chatbots[i]], queue=False)
+            for i in range(self.test_replica):
+                send_all_btn.click(self.user, [msgs[i], chatbots[i]], [msgs[i], chatbots[i]], queue=False).then(
+                    self.send_all_bot, [ids[i], chatbots[i], deployed_model_endpoint, max_new_tokens, Temperature, Top_p, Top_k],
+                    [chatbots[i], latency]
+                )
+            for i in range(self.test_replica):
+                reset_all_btn.click(self.reset, [ids[i]], [msgs[i], chatbots[i]], queue=False)
             
             for i in range(len(stop_btn)):
                 stop_btn[i].click(self.kill_node, [stop_btn[i], node_index[i]], [stop_btn[i], deployed_model_endpoint])
@@ -599,8 +617,8 @@ class ChatBotUI():
             # finetune_event = finetune_btn.click(self.finetune, [base_model_dropdown, data_url, finetuned_model_name, batch_size, num_epochs, max_train_step, lr, worker_num, cpus_per_worker], [all_model_dropdown])
             # finetune_progress_event = finetune_btn.click(self.finetune_progress, None, [finetune_res])
             # stop_finetune_btn.click(fn=self.shutdown_finetune, inputs=None, outputs=None, cancels=[finetune_event, finetune_progress_event])
-            # deploy_event = deploy_btn.click(self.deploy_func, [all_model_dropdown, replica_num, cpus_per_worker], [deployed_model_endpoint])
-            # stop_deploy_btn.click(fn=self.shutdown_deploy, inputs=None, outputs=None, cancels=[deploy_event])
+            deploy_event = deploy_btn.click(self.deploy_func, [all_model_dropdown, replica_num, cpus_per_worker], [deployed_model_endpoint])
+            stop_deploy_btn.click(fn=self.shutdown_deploy, inputs=None, outputs=None, cancels=[deploy_event])
 
             gr.Markdown(foot_content)
 
@@ -619,6 +637,7 @@ if __name__ == "__main__":
     file_path = os.path.abspath(__file__)
     infer_path = os.path.dirname(file_path)
     repo_path = os.path.abspath(infer_path + os.path.sep + "../")
+
     default_data_path = os.path.abspath(infer_path + os.path.sep + "../examples/data/sample_finetune_data.jsonl")
 
     sys.path.append(repo_path)

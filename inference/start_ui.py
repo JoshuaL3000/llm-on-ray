@@ -347,7 +347,11 @@ class ChatBotUI():
 
         stop_words = ["### Instruction", "# Instruction", "### Question", "##", " ="]
         model_config = self._all_models[model_name]
+
         print("model path: ", model_config["model_id_or_path"])
+
+        print(f"\033[31m model_path: {model_config['model_id_or_path']} \033[0m")
+        print(f"\033[31m {os.getcwd()} \033[0m")
 
         chat_processor = getattr(sys.modules[__name__], model_config["chat_processor"], None)
         if chat_processor is None:
@@ -371,7 +375,7 @@ class ChatBotUI():
         serve.shutdown()
     
     def get_ray_cluster(self):
-        command = self.venv_path + 'ray status'
+        command = '. ~/miniconda3/etc/profile.d/conda.sh' + '; conda activate ' + self.venv_path + '; ray status'
         stdin, stdout, stderr = self.ssh_connect[-1].exec_command(command)
         exit_status = stdout.channel.recv_exit_status()
         out = stdout.read().decode('utf-8')
@@ -400,14 +404,14 @@ class ChatBotUI():
         serve.shutdown()
         if btn_txt=="Kill":
             index = int(index)
-            command = self.venv_path + '; ray stop'
+            command = '. ~/miniconda3/etc/profile.d/conda.sh' + '; conda activate ' + self.venv_path + '; ray stop'
             self.ssh_connect[index].exec_command(command)
             self.ray_nodes[index]["Alive"] = "False"
             time.sleep(2)
             return "Start", ""
         elif btn_txt=="Start":
             index = int(index)
-            command = self.venv_path + "; RAY_SERVE_ENABLE_EXPERIMENTAL_STREAMING=1 ray start --address=" + self.master_ip_port + r""" --resources='{"special_hardware": 4}'"""
+            command = '. ~/miniconda3/etc/profile.d/conda.sh' + '; conda activate ' + self.venv_path + "; RAY_SERVE_ENABLE_EXPERIMENTAL_STREAMING=1 ray start --address=" + self.master_ip_port + r""" --resources='{"special_hardware": 4}'"""
             self.ssh_connect[index].exec_command(command)
             self.ray_nodes[index]["Alive"] = "True"
             time.sleep(2)
@@ -421,7 +425,11 @@ class ChatBotUI():
     
     def _init_ui(self):
         mark_alive = None
+        
+
         for index in range(len(self.ray_nodes)):
+            print('\n')
+            print(f"\033[31m {self.ray_nodes[index]} \033[0m")
             if self.ray_nodes[index]["Alive"] == False:
                 continue
             if mark_alive is None:
@@ -431,6 +439,7 @@ class ChatBotUI():
             self.ssh_connect[index].load_system_host_keys()
             self.ssh_connect[index].set_missing_host_key_policy(paramiko.RejectPolicy())
             self.ssh_connect[index].connect(hostname=node_ip, port=self.node_port, username=self.user_name)
+            print(f"\033[31m {self.ssh_connect[index]} \033[0m")
         self.ssh_connect[-1] = paramiko.SSHClient()
         self.ssh_connect[-1].load_system_host_keys()
         self.ssh_connect[-1].set_missing_host_key_policy(paramiko.RejectPolicy())
@@ -589,7 +598,7 @@ class ChatBotUI():
                             with gr.Row():
                                 node_index.append(gr.Text(value=len(stop_btn), visible=False))
                                 if node_ip == self.head_node_ip:
-                                    stop_btn.append(gr.Button("Kill", interactive=False, elem_classes="btn-style"))
+                                    stop_btn.append(gr.Button("Kill", interactive=True, elem_classes="btn-style"))
                                 else:
                                     stop_btn.append(gr.Button("Kill", elem_classes="btn-style"))
 
@@ -653,18 +662,23 @@ class ChatBotUI():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Start UI", add_help=False)
-    parser.add_argument("--finetune_model_path", default="./", type=str, help="Where to save the finetune model.")
+    parser.add_argument("--finetune_model_path", default="/", type=str, help="Where to save the finetune model.")  # removed . in path, causing model not found err
     parser.add_argument("--finetune_checkpoint_path", default="", type=str, help="Where to save checkpoints.")
     parser.add_argument("--node_port", default="22", type=str, help="The node port that ssh connects.")
     parser.add_argument("--node_user_name", default="root", type=str, help="The node user name that ssh connects.")
-    parser.add_argument("--venv_path", default="ch/llm-ray-venv/bin/", type=str, help="The environment used to execute ssh commands.")
+    parser.add_argument("--venv_path", default="llmray-conda", type=str, help="The environment used to execute ssh commands.")
     parser.add_argument("--master_ip_port", default="None", type=str, help="The ip:port of head node to connect when restart a worker node.")
+    parser.add_argument("--data_path", default="", type=str, help="The path to dataset used for finetuning.")
     args = parser.parse_args()
 
     file_path = os.path.abspath(__file__)
     infer_path = os.path.dirname(file_path)
     repo_path = os.path.abspath(infer_path + os.path.sep + "../")
-    default_data_path = os.path.abspath(infer_path + os.path.sep + "../examples/data/sample_finetune_data.jsonl")
+
+    if args.data_path:
+        data_path = args.data_path
+    else:
+        data_path = os.path.abspath(infer_path + os.path.sep + "../examples/data/sample_finetune_data.jsonl")
 
     sys.path.append(repo_path)
 
@@ -704,13 +718,14 @@ if __name__ == "__main__":
         },
         "address": "auto",
         "_node_ip_address": "127.0.0.1",
-        # "_node_ip_address": "10.0.11.8"
     }
     context = ray.init(**ray_init_config)
     head_node_ip = context.get("address").split(":")[0]
 
+    print(f"\033[31m head node ip : {head_node_ip} \033[0m")
+
     finetune_model_path = args.finetune_model_path
     finetune_checkpoint_path = args.finetune_checkpoint_path
 
-    ui = ChatBotUI(all_models, base_models, finetune_model_path, finetune_checkpoint_path, repo_path, default_data_path, config, head_node_ip, args.node_port, args.node_user_name, args.venv_path, args.master_ip_port)
+    ui = ChatBotUI(all_models, base_models, finetune_model_path, finetune_checkpoint_path, repo_path, data_path, config, head_node_ip, args.node_port, args.node_user_name, args.venv_path, args.master_ip_port)
     ui.gr_chat.queue(concurrency_count=10).launch(share=True, server_port=8080, server_name="0.0.0.0")
