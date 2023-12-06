@@ -482,26 +482,26 @@ class ChatBotUI():
                 with gr.Row():
                     finetune_res = gr.HTML("<h4 style='text-align: left; margin-bottom: 1rem'></h4>")
 
-            with gr.Tab("Deployment"):
-                step2 = "Deploy the finetuned model as an online inference service"
-                gr.HTML("<h3 style='text-align: left; margin-bottom: 1rem'>"+ step2 + "</h3>")
-                with gr.Row():
-                    with gr.Column(scale=0.8):
-                        all_models_list = list(self._all_models.keys())
-                        all_model_dropdown = gr.Dropdown(all_models_list, value=all_models_list[0],
-                                                    label="Select Model to Deploy")
-                    with gr.Column(scale=0.2, min_width=0):
-                        deploy_btn = gr.Button("Deploy")
-                        stop_deploy_btn = gr.Button("Stop")
-                
-                with gr.Accordion("Parameters", open=False, visible=True):
-                    replica_num = gr.Slider(1, 8, 4, step=1, interactive=True, label="Maximum Concurrent Requests")
-
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        deployed_model_endpoint = gr.Text(label="Deployed Model Endpoint", value="")
-
             if self.inference_tab:
+                with gr.Tab("Deployment"):
+                    step2 = "Deploy the finetuned model as an online inference service"
+                    gr.HTML("<h3 style='text-align: left; margin-bottom: 1rem'>"+ step2 + "</h3>")
+                    with gr.Row():
+                        with gr.Column(scale=0.8):
+                            all_models_list = list(self._all_models.keys())
+                            all_model_dropdown = gr.Dropdown(all_models_list, value=all_models_list[0],
+                                                        label="Select Model to Deploy")
+                        with gr.Column(scale=0.2, min_width=0):
+                            deploy_btn = gr.Button("Deploy")
+                            stop_deploy_btn = gr.Button("Stop")
+                    
+                    with gr.Accordion("Parameters", open=False, visible=True):
+                        replica_num = gr.Slider(1, 8, 4, step=1, interactive=True, label="Maximum Concurrent Requests")
+
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            deployed_model_endpoint = gr.Text(label="Deployed Model Endpoint", value="")
+
                 with gr.Tab("Inference"):
                     step3 = "Access the online inference service in your own application"
                     gr.HTML("<h3 style='text-align: left; margin-bottom: 1rem'>"+ step3 + "</h3>")
@@ -646,8 +646,10 @@ class ChatBotUI():
             finetune_event = finetune_btn.click(self.finetune, [base_model_dropdown, data_url, finetuned_model_name, batch_size, num_epochs, max_train_step, lr, worker_num, cpus_per_worker], [all_model_dropdown])
             finetune_progress_event = finetune_btn.click(self.finetune_progress, None, [finetune_res])
             stop_finetune_btn.click(fn=self.shutdown_finetune, inputs=None, outputs=None, cancels=[finetune_event, finetune_progress_event])
-            deploy_event = deploy_btn.click(self.deploy_func, [all_model_dropdown, replica_num, cpus_per_worker], [deployed_model_endpoint])
-            stop_deploy_btn.click(fn=self.shutdown_deploy, inputs=None, outputs=None, cancels=[deploy_event])
+            
+            if self.inference_tab:
+                deploy_event = deploy_btn.click(self.deploy_func, [all_model_dropdown, replica_num, cpus_per_worker], [deployed_model_endpoint])
+                stop_deploy_btn.click(fn=self.shutdown_deploy, inputs=None, outputs=None, cancels=[deploy_event])
 
             gr.Markdown(foot_content)
 

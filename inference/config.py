@@ -120,8 +120,8 @@ mpt = {
 }
 
 llama2_7b = {
-    "model_id_or_path": "meta-llama/Llama-2-7b-chat-hf",
-    "tokenizer_name_or_path": "meta-llama/Llama-2-7b-chat-hf",
+    "model_id_or_path": "/root/ch/huggingface/Llama-2-7b-chat-hf",
+    "tokenizer_name_or_path": "/root/ch/huggingface/Llama-2-7b-chat-hf",
     "port": "8000",
     "name": "llama2",
     "route_prefix": "/llama2",
