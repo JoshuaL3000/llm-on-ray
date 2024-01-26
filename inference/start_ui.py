@@ -279,7 +279,7 @@ class ChatBotUI():
         pipeline = TextPipeline()
         ops = []
         if len(target_urls) > 0:
-            ops.append(UrlLoader(urls=target_urls, target_tag='div', target_attrs={'class': 'main-content'}))
+            ops.append(UrlLoader(urls=target_urls))
         if len(pdf_folder) > 0:
             ops.append(DirectoryLoader(input_files=pdf_folder))
         ops.extend([
