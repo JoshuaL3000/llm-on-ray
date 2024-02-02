@@ -23,9 +23,15 @@ from langchain.vectorstores import FAISS
 from langchain.embeddings import HuggingFaceEmbeddings
 from pyrecdp.LLM import TextPipeline
 from pyrecdp.primitives.operations import UrlLoader, DirectoryLoader, DocumentSplit, DocumentIngestion
-# import logging
-# logging.basicConfig(level=logging.DEBUG) 
+
+import logging
+logging.basicConfig(level=logging.INFO) 
+logging.getLogger("paramiko").setLevel(logging.INFO)
 # paramiko.util.log_to_file('paramiko.log')
+logging.getLogger("requests").setLevel(logging.INFO)
+logging.getLogger("httpx").setLevel(logging.ERROR)  # HTTP/1.1 200 OK status
+logging.getLogger("httpcore").setLevel(logging.INFO)
+# logging.getLogger("urllib3").setLevel(logging.INFO)
 
 class CustomStopper(Stopper):
     def __init__(self):
@@ -463,7 +469,6 @@ class ChatBotUI():
         prompt = model_desc.prompt if model_desc.prompt else {}
         print("model path: ", model_desc.model_id_or_path)
 
-        print(f"\033[31m model_path: {finetuned['model_id_or_path']} \033[0m")
         print(f"\033[31m {os.getcwd()} \033[0m")
 
         chat_model = getattr(sys.modules[__name__], model_desc.chat_processor, None)
@@ -868,7 +873,7 @@ if __name__ == "__main__":
     parser.add_argument("--default_rag_path", default="./vector_store/", type=str, help="The path of vectorstore used by RAG.")
     parser.add_argument("--node_port", default="22", type=str, help="The node port that ssh connects.")
     parser.add_argument("--node_user_name", default="root", type=str, help="The node user name that ssh connects.")
-    parser.add_argument("--venv_path", default="llmray-conda", type=str, help="The environment used to execute ssh commands.")
+    parser.add_argument("--venv_path", default="venv", type=str, help="The environment used to execute ssh commands.")
     parser.add_argument("--master_ip_port", default="None", type=str, help="The ip:port of head node to connect when restart a worker node.")
     parser.add_argument("--data_path", default="", type=str, help="The path to dataset used for finetuning.")
     args = parser.parse_args()
