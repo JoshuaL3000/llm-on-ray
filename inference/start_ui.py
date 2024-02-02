@@ -31,7 +31,6 @@ logging.getLogger("paramiko").setLevel(logging.INFO)
 logging.getLogger("requests").setLevel(logging.INFO)
 logging.getLogger("httpx").setLevel(logging.ERROR)  # HTTP/1.1 200 OK status
 logging.getLogger("httpcore").setLevel(logging.INFO)
-# logging.getLogger("urllib3").setLevel(logging.INFO)
 
 class CustomStopper(Stopper):
     def __init__(self):
@@ -469,8 +468,6 @@ class ChatBotUI():
         prompt = model_desc.prompt if model_desc.prompt else {}
         print("model path: ", model_desc.model_id_or_path)
 
-        print(f"\033[31m {os.getcwd()} \033[0m")
-
         chat_model = getattr(sys.modules[__name__], model_desc.chat_processor, None)
         if chat_model is None:
             return model_name + " deployment failed. " + model_desc.chat_processor + " does not exist."
@@ -487,7 +484,8 @@ class ChatBotUI():
         else:
             pip_env = "transformers==4.31.0"
         deployment = PredictDeployment.options(num_replicas=replica_num, ray_actor_options={"num_cpus": cpus_per_worker_deploy, "runtime_env": {"pip": [pip_env]}}).bind(finetuned_deploy)
-        handle = serve.run(deployment, _blocking=True, port=finetuned_deploy.port, name=finetuned_deploy.name, route_prefix=finetuned_deploy.route_prefix)
+        # handle = serve.run(deployment, _blocking=True, port=finetuned_deploy.port, name=finetuned_deploy.name, route_prefix=finetuned_deploy.route_prefix)
+        handle = serve.run(deployment, _blocking=True, name=finetuned_deploy.name, route_prefix=finetuned_deploy.route_prefix)
         return self.ip_port + finetuned_deploy.route_prefix
 
     def shutdown_finetune(self):
@@ -574,7 +572,7 @@ class ChatBotUI():
             self.ssh_connect[index].load_system_host_keys()
             self.ssh_connect[index].set_missing_host_key_policy(paramiko.RejectPolicy())
             self.ssh_connect[index].connect(hostname=node_ip, port=self.node_port, username=self.user_name)
-            print(f"\033[31m {self.ssh_connect[index]} \033[0m")
+
         self.ssh_connect[-1] = paramiko.SSHClient()
         self.ssh_connect[-1].load_system_host_keys()
         self.ssh_connect[-1].set_missing_host_key_policy(paramiko.RejectPolicy())
@@ -932,7 +930,7 @@ if __name__ == "__main__":
     context = ray.init(**ray_init_config)
     head_node_ip = context.get("address").split(":")[0]
 
-    print(f"\033[31m head node ip : {head_node_ip} \033[0m")
+    print(f"head node ip : {head_node_ip}")
 
     finetune_model_path = args.finetune_model_path
     finetune_checkpoint_path = args.finetune_checkpoint_path
