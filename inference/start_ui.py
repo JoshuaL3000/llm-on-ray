@@ -484,8 +484,7 @@ class ChatBotUI():
         else:
             pip_env = "transformers==4.31.0"
         deployment = PredictDeployment.options(num_replicas=replica_num, ray_actor_options={"num_cpus": cpus_per_worker_deploy, "runtime_env": {"pip": [pip_env]}}).bind(finetuned_deploy)
-        # handle = serve.run(deployment, _blocking=True, port=finetuned_deploy.port, name=finetuned_deploy.name, route_prefix=finetuned_deploy.route_prefix)
-        handle = serve.run(deployment, _blocking=True, name=finetuned_deploy.name, route_prefix=finetuned_deploy.route_prefix)
+        handle = serve.run(deployment, _blocking=True, port=finetuned_deploy.port, name=finetuned_deploy.name, route_prefix=finetuned_deploy.route_prefix)
         return self.ip_port + finetuned_deploy.route_prefix
 
     def shutdown_finetune(self):
@@ -866,7 +865,7 @@ class ChatBotUI():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Start UI", add_help=False)
-    parser.add_argument("--finetune_model_path", default="/", type=str, help="Where to save the finetune model.")  # removed . in path, causing model not found err
+    parser.add_argument("--finetune_model_path", default="/tmp/", type=str, help="Where to save the finetune model.")  # removed . in path, causing model not found err
     parser.add_argument("--finetune_checkpoint_path", default="", type=str, help="Where to save checkpoints.")
     parser.add_argument("--default_rag_path", default="./vector_store/", type=str, help="The path of vectorstore used by RAG.")
     parser.add_argument("--node_port", default="22", type=str, help="The node port that ssh connects.")
