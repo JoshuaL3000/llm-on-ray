@@ -21,3 +21,5 @@ oneccl_bind_pt==2.1.0
 langchain
 git+https://github.com/intel/e2eAIOK.git#egg=pyrecdp&subdirectory=RecDP
 sentence-transformers
+aiorwlock
+ray==2.9
