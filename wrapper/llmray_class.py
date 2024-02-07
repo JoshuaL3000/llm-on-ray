@@ -18,10 +18,13 @@ class llmray:
             working directory: str
 
         '''
+    #################
+    # Finetune
+    #################
 
     def add_base_model (self, input_params):
         '''
-        description: user can add a new base model from huggingface 
+        description: user can add a new base model from huggingface, base model can be shared by different users
 
         input parameters:
             model_name: str
@@ -31,21 +34,22 @@ class llmray:
             config: dict
 
         return:
-            status: str  -- to indicate whether the model is successfully added
+           json object
         '''
 
-    def finetune (self, input_params ):
+    def finetune_start (self, input_params ):
 
         '''
         description: To start the finetuning job and save the trained model params at the working directory
 
         input parameters
             base_model: str
+            dataset: str  -- data path
             hyper_parameter: dict
             output_model_name: str
 
         return
-            status: str  -- indicate finetune is success/fail
+            json object: job info, status, etc
         '''
     
     def finetune_stop (self, input_params ):
@@ -57,19 +61,37 @@ class llmray:
             job_id: str  --  assuming stopping by job id
 
         return
-            status: str
+            json object: job info, status, etc
         '''
+
+    def finetune_list_jobs (self, input_params ):
+
+        '''
+        description: To provide a list of finetune jobs with job status
+
+        return
+            json object: job info, status, etc
+            example: {}
+
+            
+        '''
+
+    ###############
+    #Deploy
+    ###############
 
     def deploy (self, input_params):
         '''
-        description: To deploy a LLM model to a local endpoint at specific port
+        description: To deploy a LLM model to a local endpoint at specific port. 
+        (Please advice on LoRA implementation: how to load and store finetune weights and original weights)
 
         input parameters
-            model_name: str
+            model_name/model_uuid: str
             port: str
 
         return
             endpoint: str
+            deploy_id: str
         '''
 
     def deploy_stop (self, input_params):
@@ -84,9 +106,28 @@ class llmray:
 
         '''
 
-    def inference (self, input_params):
+    def endpoint_list (self):
         '''
-        (please advice on OpenAI-chatbot-like implementation)
+        description: return a list of endpoints available with their info
+
+        return
+            json object list
+        '''
+
+    ##############
+    # Chat
+    #
+    ##############
+    def chatbot (self, input_params):
+        '''
+        (please advice on OpenAI-chatbot-like inference implementation)
+
+        input parameters:
+            session_hash
+            endpoint
+
+        return
+    
         '''
 
     def generate_rag_vector_store (self, input_params):
@@ -101,11 +142,30 @@ class llmray:
             vector_store_name: str
         '''
     
-    def inference_with_rag (self, input_params):
+    def chatbot_with_rag (self, input_params):
         '''
         (please advice on OpenAI-chatbot-like implementation and specify which vector store to use)
 
+
         '''
+
+    # def send_message (self, input_params):
+    #     '''
+    #     description: send a chat message to a chat window
+    #     (please advice on this)
+
+    #     input parameters
+    #         chatbot_id
+    #         message
+    #         session_hash
+
+    #     return
+    #         response
+    #     '''
+
+    ##############
+    # Profiling
+    ##############
 
     def resource_monitoring (self, input_params):
         '''
