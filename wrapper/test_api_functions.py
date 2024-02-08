@@ -10,9 +10,8 @@ multi-tenancy can be achieved by setting different work directory for different 
 
 import LLMRay
 from easydata_util import *
-from data_model import * #pydantic validation model
+from model import FineTuneModel, DeployModel
  
-
 # Finetune
 @router.post('/finetune_start')
 @decorator

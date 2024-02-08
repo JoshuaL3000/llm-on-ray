@@ -7,6 +7,8 @@ Please feel free to review, add, remove or modify the list of functions, descrip
 
 '''
 
+from model import FineTuneModel, DeployModel
+
 class llmray:
     def __init__( self, working_directory ):
         #define class input parameter
