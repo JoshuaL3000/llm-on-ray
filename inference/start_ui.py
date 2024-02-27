@@ -22,7 +22,20 @@ from typing import Any, Dict
 from langchain.vectorstores import FAISS
 from langchain.embeddings import HuggingFaceEmbeddings
 from pyrecdp.LLM import TextPipeline
-from pyrecdp.primitives.operations import UrlLoader, DirectoryLoader, DocumentSplit, DocumentIngestion
+from pyrecdp.primitives.operations import (
+    UrlLoader,
+    DirectoryLoader,
+    DocumentSplit,
+    DocumentIngestion,
+    YoutubeLoader,
+    RAGTextFix,
+    JsonlReader,
+    ParquetReader,
+)
+from pyrecdp.primitives.document.reader import _default_file_readers
+
+import shutil
+import tempfile
 
 import logging
 logging.basicConfig(level=logging.INFO) 
@@ -254,10 +267,33 @@ class ChatBotUI():
             yield output
 
     def regenerate(self, db_dir, web_urls, data_pdfs, embedding_model, splitter_chunk_size, cpus_per_worker):
+        
+        tmp_dir = tempfile.mkdtemp(f"ray_rag_{time.strftime('%Y%m%d%H%M%S')}")
+
+        def cp_files_to_tmp(files):
+            for file in files:
+                shutil.copy(file, os.path.join(tmp_dir, os.path.basename(file)))
+        
         pdf_folder = []
+        jsonl_folder = []
+        parquet_folder = []
         if data_pdfs:
             for _, file in enumerate(data_pdfs):
-                pdf_folder.append(file.name)
+                if file.name.endswith("jsonl"):
+                    jsonl_folder.append(file.name)
+                elif file.name.endswith("parquet"):
+                    parquet_folder.append(file.name)
+                else:
+                    pdf_folder.append(file.name)
+                if bool(jsonl_folder):
+                    cp_files_to_tmp(jsonl_folder)
+                    loader = JsonlReader(tmp_dir)
+                elif bool(parquet_folder):
+                    cp_files_to_tmp(parquet_folder)
+                    loader = ParquetReader(tmp_dir)
+                elif bool(pdf_folder):
+                    loader = DirectoryLoader(input_files=pdf_folder)
+
         if os.path.isabs(db_dir):
             tmp_folder = os.getcwd()
             save_dir = os.path.join(tmp_folder, db_dir)
@@ -302,6 +338,7 @@ class ChatBotUI():
         ])
         pipeline.add_operations(ops)
         pipeline.execute()
+        shutil.rmtree(tmp_dir)
         return db_dir
 
     def send_all_bot(self, id, history, model_endpoint, Max_new_tokens, Temperature, Top_p, Top_k):
@@ -714,7 +751,7 @@ class ChatBotUI():
                             data_web_urls = gr.Textbox(label="web urls", value="https://www.intc.com/news-events/press-releases/detail/1655/intel-reports-third-quarter-2023-financial-results", placeholder="The urls of web dataset. Support multiple web urls seperated by ';'")
                         with gr.Column(scale=0.5):
                             # data_pdf_path = gr.Textbox(label="pdf folder", value='', placeholder="The folder of pdf files")
-                            data_pdfs = gr.File(label="upload pdf files", file_count="multiple", file_types=[".pdf"], elem_classes="file_height")
+                            data_pdfs = gr.File(label="upload pdf/json files", file_count="multiple", file_types=[".pdf", "json"], elem_classes="file_height")
                     with gr.Row():
                         with gr.Column(scale=0.4):
                             embedding_model = gr.Textbox(label="embedding model", value="sentence-transformers/all-mpnet-base-v2", placeholder="Model name to use")
@@ -924,7 +961,7 @@ if __name__ == "__main__":
         "address": "auto",
         "_node_ip_address": "127.0.0.1",
     }
-    accelerate_env_vars = get_accelerate_environment_variable(finetune_config["Training"]["accelerate_mode"])
+    accelerate_env_vars = get_accelerate_environment_variable(finetune_config["Training"]["accelerate_mode"], config=None)
     ray_init_config["runtime_env"]["env_vars"].update(accelerate_env_vars)
     context = ray.init(**ray_init_config)
     head_node_ip = context.get("address").split(":")[0]
