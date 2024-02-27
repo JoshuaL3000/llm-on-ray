@@ -28,7 +28,7 @@ parser.add_argument(
     help="Whether to enable streaming response",
 )
 parser.add_argument(
-    "--max_new_tokens", default=None, help="The maximum numbers of tokens to generate"
+    "--max_new_tokens", default=128, help="The maximum numbers of tokens to generate"
 )
 parser.add_argument(
     "--temperature", default=None, help="The value used to modulate the next token probabilities"
@@ -58,4 +58,11 @@ chat_completion = client.chat.completions.create(
     temperature=args.temperature,
     top_p=args.top_p,
 )
-print(chat_completion)
+if args.streaming_response:
+    for chunk in chat_completion:
+        content = chunk.choices[0].delta.content
+        if content is not None:
+            print(content, end="")
+    print("")
+else:
+    print(chat_completion)
