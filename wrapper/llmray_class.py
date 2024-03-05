@@ -7,19 +7,137 @@ Please feel free to review, add, remove or modify the list of functions, descrip
 
 '''
 
-from model import FineTuneModel, DeployModel
+# from model import FineTuneModel, DeployModel
+
+import requests
+import time
+import os
+import sys
+import string 
+import random
+
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+from inference.inference_config import all_models, ModelDescription, Prompt
+# print (all_models)
+from inference.inference_config import InferenceConfig as FinetunedConfig
+from inference.chat_process import ChatModelGptJ, ChatModelLLama, ChatModelwithImage  # noqa: F401
+from inference.predictor_deployment import PredictorDeployment
+
+from wrapper.utils import is_simple_api, history_to_messages, add_knowledge
+
+import huggingface_hub
+import transformers
+from ray import serve
+import ray
+# import gradio as gr
+# import argparse
+from ray.tune import Stopper
+from ray.train.base_trainer import TrainingFailedError
+from ray.tune.logger import LoggerCallback
+from multiprocessing import Process, Queue
+from ray.util import queue
+# import paramiko
+# from html_format import cpu_memory_html, ray_status_html, custom_css
+from typing import Dict, List, Any
+from langchain.vectorstores import FAISS
+from langchain.embeddings import HuggingFaceEmbeddings
+from pyrecdp.LLM import TextPipeline
+from pyrecdp.primitives.operations import (
+    UrlLoader,
+    DirectoryLoader,
+    DocumentSplit,
+    DocumentIngestion,
+    YoutubeLoader,
+    RAGTextFix,
+)
+from pyrecdp.primitives.document.reader import _default_file_readers
+from pyrecdp.core.cache_utils import RECDP_MODELS_CACHE
+
+if ("RECDP_CACHE_HOME" not in os.environ) or (not os.environ["RECDP_CACHE_HOME"]):
+    os.environ["RECDP_CACHE_HOME"] = os.getcwd()
+
+class CustomStopper(Stopper):
+    def __init__(self):
+        self.should_stop = False
+
+    def __call__(self, trial_id: str, result: dict) -> bool:
+        return self.should_stop
+
+    def stop_all(self) -> bool:
+        """Returns whether to stop trials and prevent new ones from starting."""
+        return self.should_stop
+
+    def stop(self, flag):
+        self.should_stop = flag
 
 class llmray:
-    def __init__( self, working_directory ):
+    # def __init__( self, working_directory ):
         #define class input parameter
-        self.working_directory = working_directory
-        '''
-        description: We assume to store and load model from the specified working directory
+        # self.working_directory = working_directory
+    '''
+    description: We assume to store and load model from the specified working directory
 
-        input parameters
-            working directory: str
+    input parameters_base_models
+        working directory: str
 
-        '''
+    '''
+    def __init__(
+        self,
+        all_models: Dict[str, FinetunedConfig],
+        base_models: Dict[str, FinetunedConfig],
+        working_dir: str,
+        config: dict,
+        head_node_ip: str,
+        node_port: str,
+        node_user_name: str,
+        conda_env_name: str,
+        master_ip_port: str,
+    ):
+        self._all_models = all_models
+        self._base_models = base_models
+
+        # print ("all models:", all_models)
+
+        #setting all the paths
+        self.working_dir = working_dir
+        self.finetuned_model_path = os.path.join (working_dir, "finetuned_models") #everytime after a model is finetuned, we need to output the yaml config to this directory for list models to load.
+        self.finetuned_checkpoint_path = os.path.join (working_dir, "finetuned_checkpoint")
+        self.default_data_path = os.path.join (working_dir, "data_path/data.jsonl")
+        self.default_rag_path = os.path.join (working_dir, "rag_vector_stores") #later should be change to argument of regenerate function
+
+        #be in this way for now, change later
+        file_path = os.path.abspath(__file__)
+        infer_path = os.path.dirname(file_path)
+        self.repo_code_path = os.path.abspath(infer_path + os.path.sep + "../")
+        
+        #set ip and port
+        self.head_node_ip = head_node_ip
+        self.node_port = node_port
+        self.master_ip_port = master_ip_port
+        self.ip_port = "http://127.0.0.1:8000" #this is deploy endpoint ip
+
+        #ray configs
+        self.config = config
+        self.user_name = node_user_name
+        self.conda_env_name = conda_env_name
+        self.ray_nodes = ray.nodes()
+        self.ssh_connect = [None] * (len(self.ray_nodes) + 1)
+        
+        self.stopper = CustomStopper()
+        self.test_replica = 4
+        self.bot_queue = list(range(self.test_replica))
+        self.messages = [
+            "What is AI?",
+            "What is Spark?",
+            "What is Ray?",
+            "What is chatbot?",
+        ]
+        self.process_tool = None
+        self.finetune_actor = None
+        self.finetune_status = False
+        self.embedding_model_name = "sentence-transformers/all-mpnet-base-v2"
+        # self._init_ui()
+
     #################
     # Finetune
     #################
@@ -39,6 +157,26 @@ class llmray:
            json object
         '''
 
+    def download_base_model(self, model_name, token:str=None): #assume base models are saved to .cache/huggingface/hub
+        
+        if token:
+            huggingface_hub.login (token = token)
+
+        if model_name not in self._base_models:
+            raise Exception ("Model not found in Base model list")
+        
+        model_desc = self._base_models [model_name]
+        print (model_desc)
+        # tokenizer_name_or_path = model_desc.tokenizer_name_or_path
+        model_id_or_path = model_desc.model_description.model_id_or_path
+        try:
+            model = transformers.AutoModelForCausalLM.from_pretrained(
+                model_id_or_path
+            )
+        except Exception as err: 
+            print ( "Download fail", str (err ))
+
+    
     def finetune_start (self, input_params ):
 
         '''
@@ -81,8 +219,33 @@ class llmray:
     ###############
     #Deploy
     ###############
+    def list_finetuned_models (self):
 
-    def deploy (self, input_params):
+        finetuned_models = {}
+        # for yaml_files in self.finetuned_model_path:
+        #     model_id_or_path = yaml_files.model_id_or_path
+        #     tokenizer_name_or_path = yaml_files.tokenizer_path
+        #     prompt = ""
+        #     chat_processor = 
+
+        #     new_model_desc = ModelDescription(
+        #                 model_id_or_path=yaml_files.model_id_or_path,
+        #                 tokenizer_name_or_path=yaml_files.tokenizer_path
+        #                 prompt=new_prompt,
+        #                 chat_processor=model_desc.chat_processor if model_desc is not None else "ChatModelGptJ",
+        #             )
+        #     new_finetuned = FinetunedConfig(
+        #     name=new_model_name,
+        #     route_prefix="/" + new_model_name,
+        #     model_description=new_model_desc,
+        #     )
+        #     finetuned_models[new_model_name] = new_finetuned
+        #     self._all_models[new_model_name] = new_finetuned
+
+        return finetuned_models
+        
+
+    def deploy (self, model_name: str, replica_num: int, cpus_per_worker_deploy: int):
         '''
         description: To deploy a LLM model to a local endpoint at specific port. 
         (Please advice on LoRA implementation: how to load and store finetune weights and original weights)
@@ -95,8 +258,75 @@ class llmray:
             endpoint: str
             deploy_id: str
         '''
+        # self.deploy_stop()
 
-    def deploy_stop (self, input_params):
+        if cpus_per_worker_deploy * replica_num > int(ray.available_resources()["CPU"]):
+            raise Exception("Resources are not meeting the demand")
+
+        print("Deploying model:" + model_name)
+        self.list_finetuned_models () #update the all_model list with finetune models in user directory
+        finetuned = self._all_models[model_name]
+        model_desc = finetuned.model_description
+        prompt = model_desc.prompt
+        print("model path: ", model_desc.model_id_or_path)
+
+        if model_desc.chat_processor is not None:
+            chat_model = getattr(sys.modules[__name__], model_desc.chat_processor, None)
+            if chat_model is None:
+                return (
+                    model_name
+                    + " deployment failed. "
+                    + model_desc.chat_processor
+                    + " does not exist."
+                )
+            self.process_tool = chat_model(**prompt.dict())
+
+        finetuned_deploy = finetuned.copy(deep=True)
+        finetuned_deploy.name = (''.join(random.choices(string.ascii_uppercase + string.digits, k=5)))
+        print ("deploy name:", finetuned_deploy.name)
+
+        finetuned_deploy.route_prefix = "/" + finetuned_deploy.name
+        print ("prefix:", finetuned_deploy.route_prefix)
+        
+        finetuned_deploy.device = "cpu"
+        finetuned_deploy.ipex.precision = "bf16"
+        finetuned_deploy.cpus_per_worker = cpus_per_worker_deploy
+
+        # transformers 4.35 is needed for neural-chat-7b-v3-1, will be fixed later
+        if "neural-chat" in model_name:
+            pip_env = "transformers==4.35.0"
+        elif "fuyu-8b" in model_name:
+            pip_env = "transformers==4.37.2"
+        else:
+            pip_env = "transformers==4.38.1"
+
+        deployment = PredictorDeployment.options(  # type: ignore
+            num_replicas=replica_num,
+            ray_actor_options={
+                "num_cpus": cpus_per_worker_deploy,
+                "runtime_env": {"pip": [pip_env]},
+            },
+        ).bind(finetuned_deploy)
+
+        print ("ray serve status", serve.status())
+        serve.run(
+            deployment,
+            _blocking=True,
+            port=finetuned_deploy.port,
+            name=finetuned_deploy.name,
+            route_prefix=finetuned_deploy.route_prefix,
+            # route_prefix = "/abcd"
+        )
+        print ("ray serve status", serve.status())
+        endpoint = (
+            self.ip_port
+            if finetuned_deploy.route_prefix is None
+            else self.ip_port + finetuned_deploy.route_prefix
+        )
+        return endpoint, finetuned_deploy
+
+
+    def deploy_stop (self, deploy_name):
         '''
         description: To kill an endpoint
 
@@ -107,6 +337,9 @@ class llmray:
             status: str
 
         '''
+        serve.delete (deploy_name)
+        print ("endpoint deleted.")
+        #serve.delete (name)
 
     def endpoint_list (self):
         '''
@@ -115,41 +348,277 @@ class llmray:
         return
             json object list
         '''
+        return serve.status()
 
     ##############
     # Chat
     #
     ##############
-    def chatbot (self, input_params):
-        '''
-        (please advice on OpenAI-chatbot-like inference implementation)
-
-        input parameters:
-            session_hash
-            endpoint
-
-        return
-    
-        '''
-
-    def generate_rag_vector_store (self, input_params):
-        '''
-        (please advice on this function: 
         
-        Will we need another function to parse pdf/text/html/webpage into a certain format before ingesting for rag?
+    def model_generate(self, prompt, request_url, model_name, config, simple_api=True):
+        if simple_api:
+            prompt = self.process_tool.get_prompt(prompt)
+            sample_input = {"text": prompt, "config": config, "stream": True}
+        else:
+            sample_input = {
+                "model": model_name,
+                "messages": prompt,
+                "stream": True,
+                "max_tokens": config["max_new_tokens"],
+                "temperature": config["temperature"],
+                "top_p": config["top_p"],
+                "top_k": config["top_k"],
+            }
+        proxies = {"http": None, "https": None}
+        outputs = requests.post(request_url, proxies=proxies, json=sample_input, stream=True)
+        outputs.raise_for_status()
+        for output in outputs.iter_lines(chunk_size=None, decode_unicode=True):
+            # remove context
+            if simple_api:
+                if prompt in output:
+                    output = output[len(prompt) :]
+            else:
+                if output is None or output == "":
+                    continue
+                import json
+                import re
+
+                chunk_data = re.sub("^data: ", "", output)
+                if chunk_data != "[DONE]":
+                    # Get message choices from data
+                    choices = json.loads(chunk_data)["choices"]
+                    # Pick content from first choice
+                    output = choices[0]["delta"].get("content", "")
+                else:
+                    output = ""
+            yield output
+
+    def chatbot (
+        self,
+        history,
+        # deploy_model_endpoint,
+        model_endpoint,
+        Max_new_tokens,
+        Temperature,
+        Top_p,
+        Top_k,
+        model_name=None,
+        image=None,
+        enhance_knowledge=None,
+    ):
+        print ("**********history**********")
+        print (history)
+        # request_url = model_endpoint if model_endpoint != "" else deploy_model_endpoint
+        request_url = model_endpoint
+
+        # simple_api = is_simple_api(request_url, model_name)
+        # if simple_api and image is not None:
+        #     raise gr.Error("SimpleAPI image inference is not implemented.")
+        simple_api = True
+        
+        prompt = history_to_messages(history, image)
+        if enhance_knowledge:
+            prompt = add_knowledge(prompt, enhance_knowledge)
+            print ("----------------------------")
+            print ("prompt for rag:", prompt)
+
+        time_start = time.time()
+        token_num = 0
+        config = {
+            "max_new_tokens": Max_new_tokens,
+            "temperature": Temperature,
+            "do_sample": True,
+            "top_p": Top_p,
+            "top_k": Top_k,
+            "model": model_name,
+        }
+        outputs = self.model_generate(
+            prompt=prompt,
+            request_url=request_url,
+            model_name=model_name,
+            config=config,
+            simple_api=simple_api,
         )
 
-        input parameters
-            input_data: (format tbd)
-            vector_store_name: str
-        '''
+        if history[-1][1] is None:
+            history[-1][1] = ""
+        for output in outputs:
+            if len(output) != 0:
+                time_end = time.time()
+                if simple_api:
+                    history[-1][1] += output
+                    history[-1][1] = self.process_tool.convert_output(history[-1][1])
+                else:
+                    history[-1][1] += output
+                time_spend = round(time_end - time_start, 3)
+                token_num += 1
+                new_token_latency = f"""
+                                    | <!-- --> | <!-- --> |
+                                    |---|---|
+                                    | Total Latency [s] | {time_spend} |
+                                    | Tokens | {token_num} |"""
+                yield [history, new_token_latency]
+
+    def chatbot_rag (self,
+
+        # (please advice on OpenAI-chatbot-like inference implementation)
+
+        # input parameters:
+        #     session_hash
+        #     endpoint
+
+        # return
+                 
+        history,
+        # deploy_model_endpoint,
+        model_endpoint,
+        Max_new_tokens,
+        Temperature,
+        Top_p,
+        Top_k,
+        rag_selector,
+        rag_path,
+        returned_k,
+        model_name=None,
+        image=None,
+    ):
+        enhance_knowledge = None
+
+        if rag_selector:
+
+            if os.path.isabs(rag_path):
+                tmp_folder = os.getcwd()
+                load_dir = os.path.join(tmp_folder, rag_path)
+            else:
+                load_dir = rag_path
+            if not os.path.exists(load_dir):
+                raise Exception("The specified path does not exist")
+
+            question = history[-1][0]
+            print("history: ", history)
+            print("question: ", question)
+
+            if not hasattr(self, "embeddings"):
+                local_embedding_model_path = os.path.join(
+                    RECDP_MODELS_CACHE, self.embedding_model_name
+                )
+                if os.path.exists(local_embedding_model_path):
+                    self.embeddings = HuggingFaceEmbeddings(model_name=local_embedding_model_path)
+                else:
+                    self.embeddings = HuggingFaceEmbeddings(model_name=self.embedding_model_name)
+
+            vectorstore = FAISS.load_local(load_dir, self.embeddings, index_name="knowledge_db")
+            sim_res = vectorstore.similarity_search(question, k=int(returned_k))
+            enhance_knowledge = ""
+            for doc in sim_res:
+                enhance_knowledge = enhance_knowledge + doc.page_content + ". "
+
+        bot_generator = self.chatbot(
+            history,
+            # deploy_model_endpoint,
+            model_endpoint,
+            Max_new_tokens,
+            Temperature,
+            Top_p,
+            Top_k,
+            model_name=model_name,
+            image=image,
+            enhance_knowledge=enhance_knowledge,
+        )
+        for output in bot_generator:
+            yield output
+
+    def generate_rag_vector_store (
+            self, 
+            db_dir,
+            upload_type,
+            input_type,
+            input_texts,
+            depth,
+            upload_files,
+            embedding_model,
+            splitter_chunk_size,
+            cpus_per_worker,
+        ):
+        if upload_type == "Youtube":
+            input_texts = input_texts.split(";")
+            target_urls = [url.strip() for url in input_texts if url != ""]
+            loader = YoutubeLoader(urls=target_urls)
+        elif upload_type == "Web":
+            input_texts = input_texts.split(";")
+            target_urls = [url.strip() for url in input_texts if url != ""]
+            loader = UrlLoader(urls=target_urls, max_depth=int(depth))
+        else:
+            if input_type == "local":
+                input_texts = input_texts.split(";")
+                target_folders = [folder.strip() for folder in input_texts if folder != ""]
+                info_str = "Load files: "
+                for folder in target_folders:
+                    files = os.listdir(folder)
+                    info_str = info_str + " ".join(files) + " "
+                print (info_str)
+                loader = DirectoryLoader(input_dir=target_folders)
+            else:
+                files_folder = []
+                if upload_files:
+                    for _, file in enumerate(upload_files):
+                        files_folder.append(file.name)
+                    loader = DirectoryLoader(input_files=files_folder)
+                else:
+                    raise Exception("Can't get any uploaded files.")
+
+        if os.path.isabs(db_dir):
+            tmp_folder = os.getcwd()
+            save_dir = os.path.join(tmp_folder, db_dir)
+        else:
+            save_dir = db_dir
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+
+        vector_store_type = "FAISS"
+        index_name = "knowledge_db"
+        text_splitter = "RecursiveCharacterTextSplitter"
+        splitter_chunk_size = int(splitter_chunk_size)
+        text_splitter_args = {
+            "chunk_size": splitter_chunk_size,
+            "chunk_overlap": 0,
+            "separators": ["\n\n", "\n", " ", ""],
+        }
+        embeddings_type = "HuggingFaceEmbeddings"
+
+        self.embedding_model_name = embedding_model
+        local_embedding_model_path = os.path.join(RECDP_MODELS_CACHE, self.embedding_model_name)
+        if os.path.exists(local_embedding_model_path):
+            self.embeddings = HuggingFaceEmbeddings(model_name=local_embedding_model_path)
+            embeddings_args = {"model_name": local_embedding_model_path}
+        else:
+            self.embeddings = HuggingFaceEmbeddings(model_name=self.embedding_model_name)
+            embeddings_args = {"model_name": self.embedding_model_name}
+
+        pipeline = TextPipeline()
+        ops = [loader]
+
+        ops.extend(
+            [
+                RAGTextFix(re_sentence=True),
+                DocumentSplit(text_splitter=text_splitter, text_splitter_args=text_splitter_args),
+                DocumentIngestion(
+                    vector_store=vector_store_type,
+                    vector_store_args={"output_dir": save_dir, "index": index_name},
+                    embeddings=embeddings_type,
+                    embeddings_args=embeddings_args,
+                    num_cpus=cpus_per_worker,
+                ),
+            ]
+        )
+        pipeline.add_operations(ops)
+        pipeline.execute()
+
+        print ("rag_db_dir:", db_dir)
+
+        return db_dir
     
-    def chatbot_with_rag (self, input_params):
-        '''
-        (please advice on OpenAI-chatbot-like implementation and specify which vector store to use)
 
-
-        '''
 
     # def send_message (self, input_params):
     #     '''
