@@ -739,5 +739,12 @@ class llmray:
         (need advice: are we able to profile each single job (finetune/deploy/inference)?
         )
 
+        ray.available_resources()
+        Get the current available cluster resources.
+        This is different from cluster_resources in that this will return idle (available) resources rather than total resources.
+        Note that this information can grow stale as tasks start and finish.
         
+        ray.cluster_resources()
+        Get the current total cluster resources.
+        Note that this information can grow stale as nodes are added to or removed from the cluster.
         '''
