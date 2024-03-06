@@ -56,20 +56,6 @@ from pyrecdp.core.cache_utils import RECDP_MODELS_CACHE
 if ("RECDP_CACHE_HOME" not in os.environ) or (not os.environ["RECDP_CACHE_HOME"]):
     os.environ["RECDP_CACHE_HOME"] = os.getcwd()
 
-class CustomStopper(Stopper):
-    def __init__(self):
-        self.should_stop = False
-
-    def __call__(self, trial_id: str, result: dict) -> bool:
-        return self.should_stop
-
-    def stop_all(self) -> bool:
-        """Returns whether to stop trials and prevent new ones from starting."""
-        return self.should_stop
-
-    def stop(self, flag):
-        self.should_stop = flag
-
 class llmray:
     # def __init__( self, working_directory ):
         #define class input parameter
@@ -124,7 +110,7 @@ class llmray:
         self.ray_nodes = ray.nodes()
         self.ssh_connect = [None] * (len(self.ray_nodes) + 1)
         
-        self.stopper = CustomStopper()
+        # self.stopper = CustomStopper()
         self.test_replica = 4
         self.bot_queue = list(range(self.test_replica))
         self.messages = [
@@ -713,22 +699,6 @@ class llmray:
 
         return db_dir
     
-
-
-    # def send_message (self, input_params):
-    #     '''
-    #     description: send a chat message to a chat window
-    #     (please advice on this)
-
-    #     input parameters
-    #         chatbot_id
-    #         message
-    #         session_hash
-
-    #     return
-    #         response
-    #     '''
-
     ##############
     # Profiling
     ##############
