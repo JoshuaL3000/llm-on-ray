@@ -100,10 +100,11 @@ class llmray:
 
         #setting all the paths
         self.working_dir = working_dir
+        self.base_model_path = "/base_models/"
         self.finetuned_model_path = os.path.join (working_dir, "finetuned_models") #everytime after a model is finetuned, we need to output the yaml config to this directory for list models to load.
         self.finetuned_checkpoint_path = os.path.join (working_dir, "finetuned_checkpoint")
         self.default_data_path = os.path.join (working_dir, "data_path/data.jsonl")
-        self.default_rag_path = os.path.join (working_dir, "rag_vector_stores") #later should be change to argument of regenerate function
+        self.default_rag_store_path = os.path.join (working_dir, "rag_vector_stores") #later should be change to argument of regenerate function
 
         #be in this way for now, change later
         file_path = os.path.abspath(__file__)
@@ -143,6 +144,7 @@ class llmray:
     #################
 
     def add_base_model (self, input_params):
+        #grey out first in UI
         '''
         description: user can add a new base model from huggingface, base model can be shared by different users
 
@@ -157,7 +159,7 @@ class llmray:
            json object
         '''
 
-    def download_base_model(self, model_name, token:str=None): #assume base models are saved to .cache/huggingface/hub
+    def download_base_model(self, model_name, base_model_location, token:str=None): #assume base models are saved to .cache/huggingface/hub
         
         if token:
             huggingface_hub.login (token = token)
@@ -167,14 +169,101 @@ class llmray:
         
         model_desc = self._base_models [model_name]
         print (model_desc)
-        # tokenizer_name_or_path = model_desc.tokenizer_name_or_path
+        tokenizer_name_or_path = model_desc.model_description.tokenizer_name_or_path
         model_id_or_path = model_desc.model_description.model_id_or_path
         try:
             model = transformers.AutoModelForCausalLM.from_pretrained(
                 model_id_or_path
             )
+            tokenizer = transformers.AutoTokenizer.from_pretrained (
+                tokenizer_name_or_path
+            )
+
+            #save the model
+            model_location = os.path.join ( base_model_location, model_name )
+            model.save_pretrained (model_location)
+
+            #save tokenizer
+            tokenizer.save_pretrained (model_location)
+
+            #rewrite the location in base model yaml
+            import yaml
+
+            _cur = os.path.dirname(os.path.abspath(__file__))
+            _models_folder = _cur + "/../inference/models"
+        
+            file_path = _models_folder + "/" + model_name + ".yaml"
+            print ("******************")
+            print (file_path)
+            if os.path.isfile(file_path):
+                with open(file_path, "r") as f:                   
+                    model_data = yaml.safe_load (f)
+                model_data ["model_description"]["model_id_or_path"] = model_location
+                model_data ["model_description"]["tokenizer_name_or_path"] = model_location
+
+                with open(file_path, "w") as f:  
+                    yaml.dump (model_data, f)
+            else:
+                raise Exception ("Model Yaml not found.")
+
+            #update _all_models and _base_models
+            self._base_models[model_name].model_description.model_id_or_path = model_location
+            self._base_models[model_name].model_description.tokenizer_name_or_path = model_location
+
+            self._all_models[model_name].model_description.model_id_or_path = model_location
+            self._all_models[model_name].model_description.tokenizer_name_or_path = model_location
+
+            print ( self._base_models[model_name].model_description )
+            print ( self._all_models[model_name].model_description )
+
         except Exception as err: 
             print ( "Download fail", str (err ))
+
+    def add_finetuned_model (self, model_name, finetuned_model_location):
+        """
+        create yaml file
+        update _all_model and _finetuned_model
+        
+        """
+
+    def check_base_model (self, model_name):
+        # check the yaml file to see the path is correct
+        # if model id or tokenizer id path not found or not tally, will return error
+        model_exist = False
+
+        model_desc = self._base_models [model_name]
+        print (model_desc)
+
+        # tokenizer_name_or_path = model_desc.model_description.tokenizer_name_or_path
+        model_id_or_path = model_desc.model_description.model_id_or_path
+        tokenizer_name_or_path = model_desc.model_description.tokenizer_name_or_path
+
+        import yaml
+        _cur = os.path.dirname(os.path.abspath(__file__))
+        _models_folder = _cur + "/../inference/models"
+    
+        file_path = _models_folder + "/" + model_name + ".yaml"
+ 
+        if os.path.isfile(file_path):
+            print ("yaml path exist")
+            with open(file_path, "r") as f:                   
+                model_data = yaml.safe_load (f)
+        # check base model location whether model exist
+                
+            if model_data ["model_description"]["model_id_or_path"] == model_id_or_path and \
+                model_data ["model_description"]["tokenizer_name_or_path"] == tokenizer_name_or_path:
+
+                print ("model yaml config tally with model dict")
+                print (model_id_or_path)
+
+                if os.path.isdir (model_id_or_path) and os.path.isfile ( model_id_or_path + "/config.json"):
+                    
+                    print ("Base model exists in local")
+                    model_exist = True
+
+        return model_exist
+
+        # check _all_model and _base_model dict
 
     
     def finetune_start (self, input_params ):
@@ -477,11 +566,15 @@ class llmray:
         Top_p,
         Top_k,
         rag_selector,
-        rag_path,
+        rag_store_name,
         returned_k,
         model_name=None,
         image=None,
     ):
+        rag_path = os.path.join (self.default_rag_store_path, rag_store_name)
+        if not os.path.isdir (rag_path):
+            raise Exception ("RAG vector store not found")
+        
         enhance_knowledge = None
 
         if rag_selector:
@@ -530,7 +623,7 @@ class llmray:
 
     def generate_rag_vector_store (
             self, 
-            db_dir,
+            rag_store_name,
             upload_type,
             input_type,
             input_texts,
@@ -540,6 +633,8 @@ class llmray:
             splitter_chunk_size,
             cpus_per_worker,
         ):
+        db_dir = os.path.join (self.default_rag_store_path, rag_store_name)
+
         if upload_type == "Youtube":
             input_texts = input_texts.split(";")
             target_urls = [url.strip() for url in input_texts if url != ""]
