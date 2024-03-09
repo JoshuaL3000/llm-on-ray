@@ -23,7 +23,7 @@ from inference.inference_config import InferenceConfig as FinetunedConfig
 from inference.chat_process import ChatModelGptJ, ChatModelLLama, ChatModelwithImage  # noqa: F401
 from inference.predictor_deployment import PredictorDeployment
 
-from wrapper.utils import is_simple_api, history_to_messages, add_knowledge
+from wrapper.utils import is_simple_api, history_to_messages, add_knowledge, ray_status_parser
 
 import huggingface_hub
 import transformers
@@ -88,8 +88,8 @@ class llmray:
         self.working_dir = working_dir
         self.base_model_path = "/base_models/"
         self.finetuned_model_path = os.path.join (working_dir, "finetuned_models") #everytime after a model is finetuned, we need to output the yaml config to this directory for list models to load.
-        self.finetuned_checkpoint_path = os.path.join (working_dir, "finetuned_checkpoint")
-        self.default_data_path = os.path.join (working_dir, "data_path/data.jsonl")
+        self.finetuned_checkpoint_path = os.path.join (working_dir, "finetuned_checkpoint") #finetune
+        self.default_data_path = os.path.join (working_dir, "data_path/data.jsonl") #finetune
         self.default_rag_store_path = os.path.join (working_dir, "rag_vector_stores") #later should be change to argument of regenerate function
 
         #be in this way for now, change later
@@ -335,8 +335,8 @@ class llmray:
         '''
         # self.deploy_stop()
 
-        if cpus_per_worker_deploy * replica_num > int(ray.available_resources()["CPU"]):
-            raise Exception("Resources are not meeting the demand")
+        # if cpus_per_worker_deploy * replica_num > int(ray.available_resources()["CPU"]):
+        #     raise Exception("Resources are not meeting the demand")
 
         print("Deploying model:" + model_name)
         self.list_finetuned_models () #update the all_model list with finetune models in user directory
@@ -559,6 +559,7 @@ class llmray:
     ):
         rag_path = os.path.join (self.default_rag_store_path, rag_store_name)
         if not os.path.isdir (rag_path):
+            print (rag_path)
             raise Exception ("RAG vector store not found")
         
         enhance_knowledge = None
@@ -703,18 +704,6 @@ class llmray:
     # Profiling
     ##############
 
-    def resource_monitoring (self, input_params):
-        '''
-        description: a job profiler to profile the resource usage for all llm-ray jobs and overall system utilization
-        (need advice: are we able to profile each single job (finetune/deploy/inference)?
-        )
+    def resource_monitoring (self):
 
-        ray.available_resources()
-        Get the current available cluster resources.
-        This is different from cluster_resources in that this will return idle (available) resources rather than total resources.
-        Note that this information can grow stale as tasks start and finish.
-        
-        ray.cluster_resources()
-        Get the current total cluster resources.
-        Note that this information can grow stale as nodes are added to or removed from the cluster.
-        '''
+        return ray_status_parser (), ray.available_resources(),  ray.cluster_resources()
