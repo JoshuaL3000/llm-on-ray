@@ -56,6 +56,22 @@ from pyrecdp.core.cache_utils import RECDP_MODELS_CACHE
 if ("RECDP_CACHE_HOME" not in os.environ) or (not os.environ["RECDP_CACHE_HOME"]):
     os.environ["RECDP_CACHE_HOME"] = os.getcwd()
 
+import socket
+
+def get_private_ipv4():
+    # Get the hostname of the current machine
+    hostname = socket.gethostname()
+
+    # Get the IP address of the current machine
+    ip_address = socket.gethostbyname(hostname)
+
+    return ip_address
+
+# Example usage
+private_ipv4 = get_private_ipv4()
+print("Private IPv4 address:", private_ipv4)
+
+
 class llmray:
     # def __init__( self, working_directory ):
         #define class input parameter
@@ -319,6 +335,23 @@ class llmray:
 
         return finetuned_models
         
+    def reset_process_tool (self, model_name):
+        self.list_finetuned_models () #update the all_model list with finetune models in user directory
+        finetuned = self._all_models[model_name]
+        model_desc = finetuned.model_description
+        prompt = model_desc.prompt
+        if model_desc.chat_processor is not None:
+            chat_model = getattr(sys.modules[__name__], model_desc.chat_processor, None)
+            print ("chat_model")
+            print (dir(chat_model))
+            if chat_model is None:
+                return (
+                    model_name
+                    + " deployment failed. "
+                    + model_desc.chat_processor
+                    + " does not exist."
+                )
+            self.process_tool = chat_model(**prompt.dict())
 
     def deploy (self, model_name: str, replica_num: int, cpus_per_worker_deploy: int):
         '''
@@ -339,22 +372,10 @@ class llmray:
         #     raise Exception("Resources are not meeting the demand")
 
         print("Deploying model:" + model_name)
+        self.reset_process_tool( model_name )
+
         self.list_finetuned_models () #update the all_model list with finetune models in user directory
         finetuned = self._all_models[model_name]
-        model_desc = finetuned.model_description
-        prompt = model_desc.prompt
-        print("model path: ", model_desc.model_id_or_path)
-
-        if model_desc.chat_processor is not None:
-            chat_model = getattr(sys.modules[__name__], model_desc.chat_processor, None)
-            if chat_model is None:
-                return (
-                    model_name
-                    + " deployment failed. "
-                    + model_desc.chat_processor
-                    + " does not exist."
-                )
-            self.process_tool = chat_model(**prompt.dict())
 
         finetuned_deploy = finetuned.copy(deep=True)
         finetuned_deploy.name = (''.join(random.choices(string.ascii_uppercase + string.digits, k=5)))
@@ -395,9 +416,12 @@ class llmray:
         print ("ray serve status", serve.status())
         endpoint = (
             self.ip_port
+            # private_ipv4
             if finetuned_deploy.route_prefix is None
             else self.ip_port + finetuned_deploy.route_prefix
+            # else "http://" + private_ipv4 + ":8000" + finetuned_deploy.route_prefix
         )
+    
         return endpoint, finetuned_deploy
 
 
@@ -429,8 +453,11 @@ class llmray:
     # Chat
     #
     ##############
+    # def
         
     def model_generate(self, prompt, request_url, model_name, config, simple_api=True):
+
+        self.reset_process_tool (model_name)
         if simple_api:
             prompt = self.process_tool.get_prompt(prompt)
             sample_input = {"text": prompt, "config": config, "stream": True}
@@ -505,7 +532,7 @@ class llmray:
             "do_sample": True,
             "top_p": Top_p,
             "top_k": Top_k,
-            "model": model_name,
+            "model": None,
         }
         outputs = self.model_generate(
             prompt=prompt,
@@ -547,6 +574,7 @@ class llmray:
         history,
         # deploy_model_endpoint,
         model_endpoint,
+        # process_tool_obj,
         Max_new_tokens,
         Temperature,
         Top_p,
@@ -557,14 +585,14 @@ class llmray:
         model_name=None,
         image=None,
     ):
-        rag_path = os.path.join (self.default_rag_store_path, rag_store_name)
-        if not os.path.isdir (rag_path):
-            print (rag_path)
-            raise Exception ("RAG vector store not found")
         
         enhance_knowledge = None
 
         if rag_selector:
+            rag_path = os.path.join (self.default_rag_store_path, rag_store_name)
+            if not os.path.isdir (rag_path):
+                print (rag_path)
+                raise Exception ("RAG vector store not found")
 
             if os.path.isabs(rag_path):
                 tmp_folder = os.getcwd()
