@@ -101,7 +101,7 @@ available_node_types:
         # For more documentation on available fields, see:
         # http://boto3.readthedocs.io/en/latest/reference/services/ec2.html#EC2.ServiceResource.create_instances
         node_config:
-            InstanceType: m6i.2xlarge
+            InstanceType: m7i.4xlarge
             # KeyName: ch-test-hcl
             # Default AMI for us-west-2.
             # Check https://github.com/ray-project/ray/blob/master/python/ray/autoscaler/_private/aws/config.py
@@ -164,8 +164,8 @@ initialization_commands: []
 # List of shell commands to run to set up nodes.
 setup_commands: 
     - cd /home/ubuntu/llm-on-ray && pip install .[cpu] --extra-index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/cpu/us/
-    - chmod 755 /home/ubuntu/llm-on-ray/dev/scripts/install-ui.sh
-    - /home/ubuntu/llm-on-ray/dev/scripts/install-ui.sh
+    - chmod 755 /home/ubuntu/llm-on-ray/wrapper/install_wrapper.sh
+    - /home/ubuntu/llm-on-ray/wrapper/install_wrapper.sh
     # Note: if you're developing Ray, you probably want to create a Docker image that
     # has your Ray repo pre-cloned. Then, you can replace the pip installs
     # below with a git checkout <your_sha> (and possibly a recompile).

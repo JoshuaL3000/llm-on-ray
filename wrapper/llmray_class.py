@@ -54,7 +54,7 @@ from pyrecdp.primitives.document.reader import _default_file_readers
 from pyrecdp.core.cache_utils import RECDP_MODELS_CACHE
 
 if ("RECDP_CACHE_HOME" not in os.environ) or (not os.environ["RECDP_CACHE_HOME"]):
-    os.environ["RECDP_CACHE_HOME"] = os.getcwd()
+    os.environ["RECDP_CACHE_HOME"] = "/tmp/"
 
 import socket
 
@@ -342,8 +342,6 @@ class llmray:
         prompt = model_desc.prompt
         if model_desc.chat_processor is not None:
             chat_model = getattr(sys.modules[__name__], model_desc.chat_processor, None)
-            print ("chat_model")
-            print (dir(chat_model))
             if chat_model is None:
                 return (
                     model_name
@@ -411,6 +409,7 @@ class llmray:
             port=finetuned_deploy.port,
             name=finetuned_deploy.name,
             route_prefix=finetuned_deploy.route_prefix,
+            host = "0.0.0.0"
             # route_prefix = "/abcd"
         )
         print ("ray serve status", serve.status())
@@ -705,6 +704,38 @@ class llmray:
             self.embeddings = HuggingFaceEmbeddings(model_name=self.embedding_model_name)
             embeddings_args = {"model_name": self.embedding_model_name}
 
+        print ("starting remote job.")
+        remote_job = ray.remote (self.rag_generate_remote )
+        object_ref = remote_job.remote (
+            loader, 
+            text_splitter, 
+            text_splitter_args, 
+            vector_store_type, 
+            save_dir, 
+            index_name, 
+            embeddings_type, 
+            embeddings_args, 
+            cpus_per_worker
+        )
+        ray.get (object_ref)
+
+        print ("RAG Data path:", db_dir)
+        return db_dir
+
+    #creating a ray remote function for generate RAG
+    @staticmethod                         
+    def rag_generate_remote (
+            loader, 
+            text_splitter, 
+            text_splitter_args, 
+            vector_store_type, 
+            save_dir, 
+            index_name, 
+            embeddings_type, 
+            embeddings_args,
+            cpus_per_worker,
+    ):
+            
         pipeline = TextPipeline()
         ops = [loader]
 
@@ -723,10 +754,6 @@ class llmray:
         )
         pipeline.add_operations(ops)
         pipeline.execute()
-
-        print ("rag_db_dir:", db_dir)
-
-        return db_dir
     
     ##############
     # Profiling
