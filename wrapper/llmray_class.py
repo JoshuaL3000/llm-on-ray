@@ -228,7 +228,7 @@ class llmray:
         
         """
 
-    def check_base_model (self, model_name):
+    def check_local_base_model (self, model_name):
         # check the yaml file to see the path is correct
         # if model id or tokenizer id path not found or not tally, will return error
         model_exist = False
@@ -761,4 +761,4 @@ class llmray:
 
     def resource_monitoring (self):
 
-        return ray_status_parser (), ray.available_resources(),  ray.cluster_resources()
+        return ray_status_parser (self.head_node_ip), ray.available_resources(),  ray.cluster_resources()
