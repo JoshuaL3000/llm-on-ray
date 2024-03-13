@@ -75,7 +75,7 @@ available_node_types:
             # Default AMI for us-west-2.
             # Check https://github.com/ray-project/ray/blob/master/python/ray/autoscaler/_private/aws/config.py
             # for default images for other zones.
-            # ImageId: ami-0387d929287ab193e
+            ImageId: ami-06d20e48ee8d06029
             # You can provision additional disk space with a conf as follows
             BlockDeviceMappings:
                 - DeviceName: /dev/sda1
@@ -106,7 +106,7 @@ available_node_types:
             # Default AMI for us-west-2.
             # Check https://github.com/ray-project/ray/blob/master/python/ray/autoscaler/_private/aws/config.py
             # for default images for other zones.
-            # ImageId: ami-0387d929287ab193e
+            ImageId: ami-06d20e48ee8d06029
             # Run workers on spot by default. Comment this out to use on-demand.
             # NOTE: If relying on spot instances, it is best to specify multiple different instance
             # types to avoid interruption when one instance type is experiencing heightened demand.
@@ -163,9 +163,11 @@ initialization_commands: []
 
 # List of shell commands to run to set up nodes.
 setup_commands: 
+    - sudo apt update 
     - cd /home/ubuntu/llm-on-ray && pip install .[cpu] --extra-index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/cpu/us/
     - chmod 755 /home/ubuntu/llm-on-ray/wrapper/install_wrapper.sh
     - /home/ubuntu/llm-on-ray/wrapper/install_wrapper.sh
+    - sudo chown -R ray /home/ubuntu 
     # Note: if you're developing Ray, you probably want to create a Docker image that
     # has your Ray repo pre-cloned. Then, you can replace the pip installs
     # below with a git checkout <your_sha> (and possibly a recompile).
@@ -182,9 +184,9 @@ worker_setup_commands: []
 # Command to start ray on the head node. You don't need to change this.
 head_start_ray_commands:
     - ray stop
-    - ray start --head --port=6379 --object-manager-port=8076 --autoscaling-config=~/ray_bootstrap_config.yaml --dashboard-host=0.0.0.0
+    - source $(python -c "import oneccl_bindings_for_pytorch as torch_ccl; print(torch_ccl.cwd)")/env/setvars.sh && ray start --head --port=6379 --object-manager-port=8076 --autoscaling-config=~/ray_bootstrap_config.yaml --dashboard-host=0.0.0.0
 
 # Command to start ray on worker nodes. You don't need to change this.
 worker_start_ray_commands:
     - ray stop
-    - ray start --address=$RAY_HEAD_IP:6379 --object-manager-port=8076
+    - source $(python -c "import oneccl_bindings_for_pytorch as torch_ccl; print(torch_ccl.cwd)")/env/setvars.sh && ray start --address=$RAY_HEAD_IP:6379 --object-manager-port=8076
