@@ -3,39 +3,40 @@ import os
 import re
 import subprocess
 
-def ray_status_parser():
+def ray_status_parser( head_address, head_port = "6379" ):
 
-    command = "ray status"
+    command = "ray status --address " + head_address + ":" + head_port
     # Create a new process
     process = subprocess.Popen(command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     # Capture stdout and stderr
     stdout, stderr = process.communicate()
     output =stdout.decode("utf-8")
 
-    result = {}
+    print (output)
 
-    # Parse node status
-    node_status_pattern = re.compile(r'Active:\s*(.*?)Pending:', re.DOTALL)
-    node_status_match = node_status_pattern.search(output)
-    if node_status_match:
-        active_nodes = re.findall(r'\d+\s+node_\w+', node_status_match.group(1))
-        result['active_nodes'] = active_nodes
+    parsed_data = {"active": [], "pending": [], "demands": {}}
 
-    # Parse resources
-    resources_pattern = re.compile(r'Usage:\s*(.*?)Demands:', re.DOTALL)
-    resources_match = resources_pattern.search(output)
-    if resources_match:
-        usage = re.findall(r'(\d+(\.\d+)?[KMGTPEZY]?B)/(\d+(\.\d+)?[KMGTPEZY]?B) (\w+)', resources_match.group(1))
-        result['usage'] = {item[5]: {'used': item[0], 'total': item[3]} for item in usage}
+    # Extract active and pending nodes
+    active_match = re.search(r"Active:\s*(.*)", output)
+    if active_match:
+        parsed_data["active"] = [node.strip() for node in active_match.group(1).split(",")]
 
-    # Parse demands
-    demands_pattern = re.compile(r'Demands:\s*(.*)$', re.DOTALL)
-    demands_match = demands_pattern.search(output)
-    if demands_match:
-        demands = re.findall(r'\{(.+?)\}:\s*(\d+)\+ pending tasks/actors', demands_match.group(1))
-        result['demands'] = {item[0]: int(item[1]) for item in demands}
+    pending_match = re.search(r"Pending:\s*(.*)", output)
+    if pending_match:
+        parsed_data["pending"] = [node.strip() for node in pending_match.group(1).split(",")]
 
-    return result
+    # Extract resource usage
+    usage_match = re.search(r"Usage:\s*(.*)", output)
+    if usage_match:
+        usage_data = usage_match.group(1).split("\n")
+        for line in usage_data:
+            try:
+                resource, value = line.split(":")
+                parsed_data["demands"][resource.strip()] = value.strip()
+            except: 
+                pass
+
+    return parsed_data
 
 def is_simple_api(request_url, model_name):
     if model_name is None or len(model_name) == 0:

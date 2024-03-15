@@ -15,6 +15,9 @@ import os
 import sys
 import string 
 import random
+import yaml
+import subprocess
+import requests
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from inference.inference_config import all_models, ModelDescription, Prompt
@@ -29,6 +32,7 @@ import huggingface_hub
 import transformers
 from ray import serve
 import ray
+from ray.job_submission import JobSubmissionClient
 # import gradio as gr
 # import argparse
 from ray.tune import Stopper
@@ -50,7 +54,7 @@ from pyrecdp.primitives.operations import (
     YoutubeLoader,
     RAGTextFix,
 )
-from pyrecdp.primitives.document.reader import _default_file_readers
+# from pyrecdp.primitives.document.reader import _default_file_readers
 from pyrecdp.core.cache_utils import RECDP_MODELS_CACHE
 
 if ("RECDP_CACHE_HOME" not in os.environ) or (not os.environ["RECDP_CACHE_HOME"]):
@@ -94,9 +98,11 @@ class llmray:
         node_user_name: str,
         conda_env_name: str,
         master_ip_port: str,
+        cluster_config_yaml: str
     ):
         self._all_models = all_models
         self._base_models = base_models
+        self.cluster_config_yaml = cluster_config_yaml
 
         # print ("all models:", all_models)
 
@@ -117,14 +123,14 @@ class llmray:
         self.head_node_ip = head_node_ip
         self.node_port = node_port
         self.master_ip_port = master_ip_port
-        self.ip_port = "http://127.0.0.1:8000" #this is deploy endpoint ip
+        self.ip_port = "http://127.0.0.1:8000" #this is deploy endpoint ip 
 
         #ray configs
         self.config = config
         self.user_name = node_user_name
         self.conda_env_name = conda_env_name
-        self.ray_nodes = ray.nodes()
-        self.ssh_connect = [None] * (len(self.ray_nodes) + 1)
+        # self.ray_nodes = ray.nodes()
+        # self.ssh_connect = [None] * (len(self.ray_nodes) + 1)
         
         # self.stopper = CustomStopper()
         self.test_replica = 4
@@ -136,8 +142,8 @@ class llmray:
             "What is chatbot?",
         ]
         self.process_tool = None
-        self.finetune_actor = None
-        self.finetune_status = False
+        # self.finetune_actor = None
+        # self.finetune_status = False
         self.embedding_model_name = "sentence-transformers/all-mpnet-base-v2"
         # self._init_ui()
 
@@ -266,46 +272,138 @@ class llmray:
         return model_exist
 
         # check _all_model and _base_model dict
-
     
-    def finetune_start (self, input_params ):
+    def job_submission_client ( #using this way to avoid double ray init issue
+        self,
+        job_id:str, 
+        entrypoint: str, #basically the command to run the job. the files must be present in the head
+        head_node_ip:str = "", 
+        port:str = "8265", 
+        runtime_env: dict = {}, #if already defined in your script in entrypoint, no need to define here
+        metadata: dict = {} #you can set custom metadata as remarks or something
+        ): 
 
-        '''
-        description: To start the finetuning job and save the trained model params at the working directory
+        if not head_node_ip:
+            head_node_ip = self.head_node_ip
 
-        input parameters
-            base_model: str
-            dataset: str  -- data path
-            hyper_parameter: dict
-            output_model_name: str
+        resp = requests.post (
+            url = "http://" + head_node_ip + ":" + port + "/api/jobs",
+            json = {
+                "entrypoint" : entrypoint,
+                "job_id" : job_id,
+                "runtime_env" : runtime_env,
+                "metadata" : metadata
+            }
+        )
 
-        return
-            json object: job info, status, etc
-        '''
+        if resp.status_code == 200:
+            return {"job_id": resp.json()['job_id'], "message": "SUCCESS"}
+        else:
+            return {"job_id": resp.json()['job_id'], "message": "FAIL"}
     
-    def finetune_stop (self, input_params ):
+    def finetune(
+        self,
+        model_name,
+        # custom_model_name, #not supporting this for now
+        dataset,
+        new_model_name,
+        batch_size,
+        num_epochs,
+        max_train_step,
+        lr,
+        worker_num,
+        cpus_per_worker_ftn,
+    ):
+        # if model_name == "specify other models":
+        #     model_desc = None
+        #     origin_model_path = custom_model_name
+        #     if "gpt" in model_name.lower() or "pythia" in model_name.lower():
+        #         gpt_base_model = True
+        #     else:
+        #         gpt_base_model = False
+        # else:
+        model_desc = self._base_models[model_name].model_description
+        print ("model_desc:",model_desc)
+        origin_model_path = model_desc.model_id_or_path
+        gpt_base_model = model_desc.gpt_base_model
 
-        '''
-        description: To cancel a started finetuning job gracefully
+        # last_gpt_base_model = False
+        finetuned_model_path = os.path.join(self.finetuned_model_path, model_name, new_model_name)
+        finetuned_checkpoint_path = os.path.join(self.finetuned_checkpoint_path, model_name, new_model_name)
 
-        input parameters
-            job_id: str  --  assuming stopping by job id
+        finetune_config = self.config.copy()       
+        
+        finetune_config["Dataset"]["train_file"] = dataset
+        finetune_config["Dataset"]["validation_file"] = None
+        finetune_config["Dataset"]["validation_split_precentage"] = 0
 
-        return
-            json object: job info, status, etc
-        '''
+        finetune_config["General"]["base_model"] = origin_model_path
+        if finetuned_checkpoint_path:
+            finetune_config["General"]["checkpoint_dir"] = finetuned_checkpoint_path 
+        finetune_config["General"]["config"]["trust_remote_code"] = True
+        finetune_config["General"]["config"]["use_auth_token"] = None
+        finetune_config["General"]["gpt_base_model"] = gpt_base_model
+        finetune_config["General"]["output_dir"] = finetuned_model_path
 
-    def finetune_list_jobs (self, input_params ):
+        finetune_config["Training"]["accelerate_mode"] = "CPU_DDP" #only support CPU now
+        finetune_config["Training"]["batch_size"] = batch_size
+        finetune_config["Training"]["device"] = "CPU"
+        finetune_config["Training"]["epochs"] = num_epochs
+        finetune_config["Training"]["learning_rate"] = lr
+        finetune_config["Training"]["lr_scheduler"] = "linear"     
+        if max_train_step != 0:
+            finetune_config["Training"]["max_train_steps"] = max_train_step
+        finetune_config["Training"]["num_training_workers"] = worker_num
+        finetune_config["Training"]["optimizer"] = "AdamW"
+        finetune_config["Training"]["resources_per_worker"]['CPU'] = cpus_per_worker_ftn
+        finetune_config["Training"]["weight_decay"] = 0.0
 
-        '''
-        description: To provide a list of finetune jobs with job status
+        finetune_config["failure_config"]['max_failures'] = 4
 
-        return
-            json object: job info, status, etc
-            example: {}
+        self.finetune_status = False
 
-            
-        '''
+        config_file_name = os.path.join (self.finetuned_model_path, new_model_name + ".yaml" )
+        with open(config_file_name, "w") as f:
+            yaml.dump(finetune_config, f)
+        #sync yaml file to head node
+        rsync_command = f"ray rsync_up {self.cluster_config_yaml} {config_file_name} {config_file_name}" 
+        process = subprocess.Popen (rsync_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        stdout, stderr = process.communicate()
+        if "Error" in stderr:
+            raise RuntimeError ( "Upload config YAML failed:" + str (stderr) )
+
+        job_submission_status = self.job_submission_client (
+            job_id = model_name,
+            entrypoint=f"cd /home/ubuntu/llm-on-ray; python finetune/finetune.py --config_file {config_file_name}",
+            metadata = finetune_config
+        )
+
+        submission_id = job_submission_status ['job_id']
+        if job_submission_status ['message'] == "FAIL":
+            raise RuntimeError ("Job submission unsuccessful")     
+        
+        return submission_id
+    
+    def finetune_stop (self, job_id ):
+        try:
+            self.client.delete_job (job_id)
+        except Exception as err:
+            print ("Unable to kill job:\n" , str(err))
+    
+    def finetune_list_jobs (self):
+        return self.list_jobs()
+
+    def get_finetune_job_status (self, job_id):
+        status = self.client.get_job_status (job_id)
+        print (status)
+        return status
+
+    def get_finetune_job_logs (self, job_id):
+        logs = self.client.get_job_logs (job_id)
+        print (logs)
+        return logs
+    
+    #rsync here to get the model back to server and delete from head node
 
     ###############
     #Deploy
@@ -313,28 +411,51 @@ class llmray:
     def list_finetuned_models (self):
 
         finetuned_models = {}
-        # for yaml_files in self.finetuned_model_path:
-        #     model_id_or_path = yaml_files.model_id_or_path
-        #     tokenizer_name_or_path = yaml_files.tokenizer_path
-        #     prompt = ""
-        #     chat_processor = 
+        for yaml_files in os.listdir(self.finetuned_model_path):
 
-        #     new_model_desc = ModelDescription(
-        #                 model_id_or_path=yaml_files.model_id_or_path,
-        #                 tokenizer_name_or_path=yaml_files.tokenizer_path
-        #                 prompt=new_prompt,
-        #                 chat_processor=model_desc.chat_processor if model_desc is not None else "ChatModelGptJ",
-        #             )
-        #     new_finetuned = FinetunedConfig(
-        #     name=new_model_name,
-        #     route_prefix="/" + new_model_name,
-        #     model_description=new_model_desc,
-        #     )
-        #     finetuned_models[new_model_name] = new_finetuned
-        #     self._all_models[new_model_name] = new_finetuned
+            if ".yaml" not in yaml_files: 
+                continue
+            yaml_data = yaml.safe_load (
+                open(os.path.join (self.finetuned_model_path, yaml_files), "r")
+                )
+            # model_id_or_path = yaml_files.model_id_or_path
+            # tokenizer_name_or_path = yaml_files.tokenizer_path
+            # prompt = ""
+            # chat_processor = 
+            new_prompt = Prompt()
+            new_prompt.intro = "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n"
+            new_prompt.human_id = "\n### Instruction"
+            new_prompt.bot_id = "\n### Response"
+            new_prompt.stop_words.extend(
+                ["### Instruction", "# Instruction", "### Question", "##", " ="]
+            )
+
+            new_model_desc = ModelDescription(
+                        model_id_or_path=yaml_data['model_description'] ['model_id_or_path'],
+                        tokenizer_name_or_path=yaml_data['model_description']['tokenizer_name_or_path'],
+                        prompt=new_prompt,
+                        chat_processor= yaml_data['model_description']['chat_processor'],
+                    )
+
+            new_model_name = yaml_files.split(".yaml")[0]
+            new_finetuned = FinetunedConfig(
+                name= new_model_name,
+                route_prefix="/" + new_model_name,
+                model_description=new_model_desc,
+            )
+            finetuned_models[new_model_name] = new_finetuned
+            self._all_models[new_model_name] = new_finetuned
+
+        for model in self._all_models:
+            print (model)
 
         return finetuned_models
         
+    def sync_finetuned_model_to_ray_head(self, model_name):
+        folder_to_sync = os.path.join (self.finetuned_model_path, model_name)
+        
+
+    
     def reset_process_tool (self, model_name):
         self.list_finetuned_models () #update the all_model list with finetune models in user directory
         finetuned = self._all_models[model_name]
@@ -375,6 +496,8 @@ class llmray:
         self.list_finetuned_models () #update the all_model list with finetune models in user directory
         finetuned = self._all_models[model_name]
 
+        print ("model to deploy:", finetuned)
+
         finetuned_deploy = finetuned.copy(deep=True)
         finetuned_deploy.name = (''.join(random.choices(string.ascii_uppercase + string.digits, k=5)))
         print ("deploy name:", finetuned_deploy.name)
@@ -402,7 +525,7 @@ class llmray:
             },
         ).bind(finetuned_deploy)
 
-        print ("ray serve status", serve.status())
+        # print ("ray serve status", serve.status())
         serve.run(
             deployment,
             _blocking=True,
@@ -412,7 +535,7 @@ class llmray:
             host = "0.0.0.0"
             # route_prefix = "/abcd"
         )
-        print ("ray serve status", serve.status())
+        # print ("ray serve status", serve.status())
         endpoint = (
             self.ip_port
             # private_ipv4
@@ -420,6 +543,8 @@ class llmray:
             else self.ip_port + finetuned_deploy.route_prefix
             # else "http://" + private_ipv4 + ":8000" + finetuned_deploy.route_prefix
         )
+
+        # print (serve.status().deployments.message)
     
         return endpoint, finetuned_deploy
 
