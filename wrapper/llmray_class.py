@@ -18,6 +18,7 @@ import random
 import yaml
 import subprocess
 import requests
+import datetime
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from inference.inference_config import all_models, ModelDescription, Prompt
@@ -32,7 +33,7 @@ import huggingface_hub
 import transformers
 from ray import serve
 import ray
-from ray.job_submission import JobSubmissionClient
+# from ray.job_submission import JobSubmissionClient
 # import gradio as gr
 # import argparse
 from ray.tune import Stopper
@@ -62,19 +63,12 @@ if ("RECDP_CACHE_HOME" not in os.environ) or (not os.environ["RECDP_CACHE_HOME"]
 
 import socket
 
-def get_private_ipv4():
+def get_client_private_ipv4():
     # Get the hostname of the current machine
     hostname = socket.gethostname()
-
     # Get the IP address of the current machine
     ip_address = socket.gethostbyname(hostname)
-
     return ip_address
-
-# Example usage
-private_ipv4 = get_private_ipv4()
-print("Private IPv4 address:", private_ipv4)
-
 
 class llmray:
     # def __init__( self, working_directory ):
@@ -94,10 +88,10 @@ class llmray:
         working_dir: str,
         config: dict,
         head_node_ip: str,
-        node_port: str,
-        node_user_name: str,
-        conda_env_name: str,
-        master_ip_port: str,
+        # node_port: str,
+        # node_user_name: str,
+        # conda_env_name: str,
+        # master_ip_port: str,
         cluster_config_yaml: str
     ):
         self._all_models = all_models
@@ -108,10 +102,10 @@ class llmray:
 
         #setting all the paths
         self.working_dir = working_dir
-        self.base_model_path = "/base_models/"
+        # self.base_model_path = "/base_models/"  #not using now
         self.finetuned_model_path = os.path.join (working_dir, "finetuned_models") #everytime after a model is finetuned, we need to output the yaml config to this directory for list models to load.
-        self.finetuned_checkpoint_path = os.path.join (working_dir, "finetuned_checkpoint") #finetune
-        self.default_data_path = os.path.join (working_dir, "data_path/data.jsonl") #finetune
+        # self.finetuned_checkpoint_path = os.path.join (working_dir, "finetuned_checkpoint") #finetune
+        #self.default_data_path = os.path.join (working_dir, "data_path/data.jsonl") #finetune
         self.default_rag_store_path = os.path.join (working_dir, "rag_vector_stores") #later should be change to argument of regenerate function
 
         #be in this way for now, change later
@@ -121,14 +115,14 @@ class llmray:
         
         #set ip and port
         self.head_node_ip = head_node_ip
-        self.node_port = node_port
-        self.master_ip_port = master_ip_port
+        # self.node_port = node_port
+        # self.master_ip_port = master_ip_port
         self.ip_port = "http://127.0.0.1:8000" #this is deploy endpoint ip 
 
         #ray configs
         self.config = config
-        self.user_name = node_user_name
-        self.conda_env_name = conda_env_name
+        # self.user_name = node_user_name
+        # self.conda_env_name = conda_env_name
         # self.ray_nodes = ray.nodes()
         # self.ssh_connect = [None] * (len(self.ray_nodes) + 1)
         
@@ -145,7 +139,8 @@ class llmray:
         # self.finetune_actor = None
         # self.finetune_status = False
         self.embedding_model_name = "sentence-transformers/all-mpnet-base-v2"
-        # self._init_ui()
+        self.all_finetune_jobs = []
+        self.all_deployed_endpoints = []
 
     #################
     # Finetune
@@ -274,46 +269,51 @@ class llmray:
         # check _all_model and _base_model dict
     
     def job_submission_client ( #using this way to avoid double ray init issue
-        self,
-        job_id:str, 
-        entrypoint: str, #basically the command to run the job. the files must be present in the head
-        head_node_ip:str = "", 
-        port:str = "8265", 
-        runtime_env: dict = {}, #if already defined in your script in entrypoint, no need to define here
-        metadata: dict = {} #you can set custom metadata as remarks or something
+            self,
+            submission_id:str, 
+            entrypoint: str, #basically the command to run the job. the files must be present in the head
+            # head_node_ip:str = "", 
+            port:str = "8265", 
+            runtime_env: dict = {}, #if already defined in your script in entrypoint, no need to define here
+            metadata= {} #you can set custom metadata as remarks or something
         ): 
 
-        if not head_node_ip:
-            head_node_ip = self.head_node_ip
+        # if not head_node_ip:
+        head_node_ip = self.head_node_ip
 
+        url = "http://" + head_node_ip + ":" + port + "/api/jobs/"
+        print (url)
         resp = requests.post (
-            url = "http://" + head_node_ip + ":" + port + "/api/jobs",
+            url = url,
             json = {
                 "entrypoint" : entrypoint,
-                "job_id" : job_id,
+                "submission_id" : submission_id,
                 "runtime_env" : runtime_env,
-                "metadata" : metadata
+                # "metadata" : metadata
             }
         )
 
+        print (resp.content)
+        print ("resp:", resp.json())
+
         if resp.status_code == 200:
-            return {"job_id": resp.json()['job_id'], "message": "SUCCESS"}
+            return {"submission_id": submission_id, "message": "SUCCESS"}
         else:
-            return {"job_id": resp.json()['job_id'], "message": "FAIL"}
+            return {"submission_id": None, "message": "FAIL"}
     
-    def finetune(
-        self,
-        model_name,
-        # custom_model_name, #not supporting this for now
-        dataset,
-        new_model_name,
-        batch_size,
-        num_epochs,
-        max_train_step,
-        lr,
-        worker_num,
-        cpus_per_worker_ftn,
-    ):
+    def finetune_start(
+            self,
+            dataset_path,
+            new_model_name,
+            model_name, #base_model
+            # custom_model_name, #not supporting this for now
+            batch_size,
+            num_epochs,
+            max_train_step,
+            lr,
+            worker_num,
+            cpus_per_worker_ftn,
+        ):
         # if model_name == "specify other models":
         #     model_desc = None
         #     origin_model_path = custom_model_name
@@ -322,6 +322,8 @@ class llmray:
         #     else:
         #         gpt_base_model = False
         # else:
+        
+        # head_dataset_path = os.path.join("/home/ubuntu/llm-on-ray/datasets", os.path.basename (dataset_path) )
         model_desc = self._base_models[model_name].model_description
         print ("model_desc:",model_desc)
         origin_model_path = model_desc.model_id_or_path
@@ -329,11 +331,24 @@ class llmray:
 
         # last_gpt_base_model = False
         finetuned_model_path = os.path.join(self.finetuned_model_path, model_name, new_model_name)
-        finetuned_checkpoint_path = os.path.join(self.finetuned_checkpoint_path, model_name, new_model_name)
+        finetuned_checkpoint_path = os.path.join(self.finetuned_model_path, model_name, new_model_name + "-checkpoint")
+        #sync the folder location with head
+        try:
+            os.mkdir ("/tmp/ray_rsync/")
+        except:
+            print ("sync with head")
+        rsync_command = f"ray rsync_up {self.cluster_config_yaml} /tmp/ray_rsync/ {finetuned_model_path}" 
+        process = subprocess.Popen (rsync_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        stdout, stderr = process.communicate()
+        print ("model folder sync status:", stdout)
+        rsync_command = f"ray rsync_up {self.cluster_config_yaml} /tmp/ray_rsync/ {finetuned_checkpoint_path}" 
+        process = subprocess.Popen (rsync_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        stdout, stderr = process.communicate()
+        print ("checkpoint folder sync status:", stdout)
 
         finetune_config = self.config.copy()       
         
-        finetune_config["Dataset"]["train_file"] = dataset
+        finetune_config["Dataset"]["train_file"] = dataset_path
         finetune_config["Dataset"]["validation_file"] = None
         finetune_config["Dataset"]["validation_split_precentage"] = 0
 
@@ -360,51 +375,125 @@ class llmray:
 
         finetune_config["failure_config"]['max_failures'] = 4
 
-        self.finetune_status = False
-
         config_file_name = os.path.join (self.finetuned_model_path, new_model_name + ".yaml" )
         with open(config_file_name, "w") as f:
             yaml.dump(finetune_config, f)
-        #sync yaml file to head node
-        rsync_command = f"ray rsync_up {self.cluster_config_yaml} {config_file_name} {config_file_name}" 
-        process = subprocess.Popen (rsync_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-        stdout, stderr = process.communicate()
-        if "Error" in stderr:
-            raise RuntimeError ( "Upload config YAML failed:" + str (stderr) )
+        # #sync yaml file to head node
+        # print ("sync yaml file to head node")
+        # rsync_command = f"ray rsync_up {self.cluster_config_yaml} {config_file_name} {config_file_name}" 
+        # process = subprocess.Popen (rsync_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        # stdout, stderr = process.communicate()
+        # if "Error" in stderr:
+        #     raise RuntimeError ( "Upload config YAML failed:" + str (stderr) )
+        
+        # #sync dataset to head node
+        # print ("sync dataset to head node")
+        # rsync_command = f"ray rsync_up {self.cluster_config_yaml} {dataset_path} {head_dataset_path}" 
+        # process = subprocess.Popen (rsync_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        # stdout, stderr = process.communicate()
+        # if "Error" in stderr:
+        #     raise RuntimeError ( "Upload dataset failed:" + str (stderr) )
 
         job_submission_status = self.job_submission_client (
-            job_id = model_name,
+            submission_id = f"{new_model_name}-{int(datetime.datetime.now().timestamp())}",
             entrypoint=f"cd /home/ubuntu/llm-on-ray; python finetune/finetune.py --config_file {config_file_name}",
             metadata = finetune_config
         )
 
-        submission_id = job_submission_status ['job_id']
+        submission_id = job_submission_status ['submission_id']
         if job_submission_status ['message'] == "FAIL":
             raise RuntimeError ("Job submission unsuccessful")     
         
+        self.all_finetune_jobs.append (submission_id)
         return submission_id
     
-    def finetune_stop (self, job_id ):
+    def finetune_stop (
+            self, 
+            submission_id: str,
+            port: str = "8265"
+        ):
+        url = f"http://{self.head_node_ip}:{port}/api/jobs/{submission_id}/stop"
+        resp = requests.post (url)
+
+        if resp.status_code == 200:
+            return resp.json () ['stopped']
+        else:
+            raise ConnectionRefusedError (f"Unable to stop job with status code {resp.status_code}: {str(resp.content)}")
+
+    #return all finetune job metadata and status
+    def finetune_list_jobs (
+            self,
+            port:str = "8265" 
+        ):
+        url = "http://" + self.head_node_ip + ":" + port + "/api/jobs/"
+        data = requests.get (url)
+        if data.status_code == 200:
+            data_json = data.json()
+            job_list = []
+            for job in data_json:
+                # if job ['submission_id'] in self.all_finetune_jobs:
+                job_list.append (job)
+            return job_list
+        else:
+            raise ConnectionError (f"Getting {str(data.status_code)} response from GET requests. \n {str(data.content)}")
+
+    #return single job metadata and status
+    def get_job_status (
+            self, 
+            submission_id: str,
+            port: str = "8265"
+        ):
+        url = "http://" + self.head_node_ip + ":" + port + f"/api/jobs/{submission_id}"
+        data = requests.get (url)
+        if data.status_code == 200:
+            status = data.json()['status']
+            return status
+        else:
+            raise ConnectionError (f"Getting {str(data.status_code)} response from GET requests. \n {str(data.content)}")
+
+    #no support log for now
+    # def get_finetune_job_logs (self, job_id):
+    #     logs = self.client.get_job_logs (job_id)
+    #     print (logs)
+    #     return logs
+    
+    #rsync here to get the model back to server and delete from head node after finetune done
+    def download_finetuned_model_from_ray_head (
+        self,
+        model_name: str, 
+        base_model_name: str,
+    ):
+        finetuned_model_path = os.path.join(self.finetuned_model_path, base_model_name, model_name)
+        #download model
+        rsync_command = f"ray rsync_down {self.cluster_config_yaml} {finetuned_model_path} {finetuned_model_path}" 
+        print (rsync_command)
+        process = subprocess.Popen (rsync_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        stdout, stderr = process.communicate()
+        if "Error" in stderr:
+            raise RuntimeError ( "Model download failed:" + str (stderr) )
+        else:
+            return "SUCCESS"
+
+    def remove_finetuned_models (
+        self,
+        model_name:str,
+        base_model_name: str
+    ):
+        finetuned_model_path = os.path.join(self.finetuned_model_path, base_model_name, model_name)
+        finetuned_checkpoint_path = os.path.join(self.finetuned_model_path, base_model_name, model_name + "-checkpoint")
+        config_file_name = os.path.join (self.finetuned_model_path, model_name + ".yaml" )
+
+        #delete from local
         try:
-            self.client.delete_job (job_id)
+            os.rmdir (finetuned_model_path)
+            os.rmdir (finetuned_checkpoint_path)
+            os.remove (config_file_name)
+            return True
+
         except Exception as err:
-            print ("Unable to kill job:\n" , str(err))
-    
-    def finetune_list_jobs (self):
-        return self.list_jobs()
-
-    def get_finetune_job_status (self, job_id):
-        status = self.client.get_job_status (job_id)
-        print (status)
-        return status
-
-    def get_finetune_job_logs (self, job_id):
-        logs = self.client.get_job_logs (job_id)
-        print (logs)
-        return logs
-    
-    #rsync here to get the model back to server and delete from head node
-
+            print ("Unable to remove :", str(err))
+            return False
+        
     ###############
     #Deploy
     ###############
@@ -450,12 +539,7 @@ class llmray:
             print (model)
 
         return finetuned_models
-        
-    def sync_finetuned_model_to_ray_head(self, model_name):
-        folder_to_sync = os.path.join (self.finetuned_model_path, model_name)
-        
-
-    
+         
     def reset_process_tool (self, model_name):
         self.list_finetuned_models () #update the all_model list with finetune models in user directory
         finetuned = self._all_models[model_name]
@@ -472,19 +556,12 @@ class llmray:
                 )
             self.process_tool = chat_model(**prompt.dict())
 
-    def deploy (self, model_name: str, replica_num: int, cpus_per_worker_deploy: int):
-        '''
-        description: To deploy a LLM model to a local endpoint at specific port. 
-        (Please advice on LoRA implementation: how to load and store finetune weights and original weights)
-
-        input parameters
-            model_name/model_uuid: str
-            port: str
-
-        return
-            endpoint: str
-            deploy_id: str
-        '''
+    def deploy (
+            self, 
+            model_name: str, 
+            replica_num: int = 1,
+            cpus_per_worker_deploy: int = 3
+        ):
         # self.deploy_stop()
 
         # if cpus_per_worker_deploy * replica_num > int(ray.available_resources()["CPU"]):
@@ -533,16 +610,9 @@ class llmray:
             name=finetuned_deploy.name,
             route_prefix=finetuned_deploy.route_prefix,
             host = "0.0.0.0"
-            # route_prefix = "/abcd"
         )
         # print ("ray serve status", serve.status())
-        endpoint = (
-            self.ip_port
-            # private_ipv4
-            if finetuned_deploy.route_prefix is None
-            else self.ip_port + finetuned_deploy.route_prefix
-            # else "http://" + private_ipv4 + ":8000" + finetuned_deploy.route_prefix
-        )
+        endpoint = f"http://{self.head_node_ip}:{finetuned_deploy.port}{finetuned_deploy.route_prefix}"
 
         # print (serve.status().deployments.message)
     
@@ -763,14 +833,14 @@ class llmray:
     def generate_rag_vector_store (
             self, 
             rag_store_name,
-            upload_type,
-            input_type,
-            input_texts,
-            depth,
-            upload_files,
-            embedding_model,
-            splitter_chunk_size,
-            cpus_per_worker,
+            upload_type, #Youtube, Web, local
+            input_type, #local
+            input_texts, #folder path
+            depth = 1,
+            upload_files = "", #empty
+            embedding_model = "sentence-transformers/all-mpnet-base-v2",
+            splitter_chunk_size = 500,
+            cpus_per_worker = 2,
         ):
         db_dir = os.path.join (self.default_rag_store_path, rag_store_name)
 
