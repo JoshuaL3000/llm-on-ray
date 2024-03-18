@@ -395,6 +395,29 @@ class llmray:
         # if "Error" in stderr:
         #     raise RuntimeError ( "Upload dataset failed:" + str (stderr) )
 
+        #make inference config yaml
+        inference_config = {}
+        inference_config ['port'] = 8000
+        inference_config ['name'] = new_model_name
+        inference_config ['route_prefix'] = ''
+        inference_config ['num_replicas'] = 1
+        inference_config ['cpus_per_worker'] = 16
+        inference_config ['gpus_per_worker'] = 0
+        inference_config ['deepspeed'] = False
+        inference_config ['workers_per_group'] = 1
+        inference_config ['device'] = "cpu"
+        inference_config ['ipex'] = {}
+        inference_config ['ipex']['enabled'] = False
+        inference_config ['ipex']['precision'] = 'bf16'
+        inference_config ['model_description'] = {}
+        inference_config ['model_description']['model_id_or_path'] = finetuned_model_path
+        inference_config ['model_description']['tokenizer_name_or_path'] = model_desc.tokenizer_name_or_path
+        inference_config ['model_description']['chat_processor'] = model_desc.chat_processor
+
+        inference_config_file_name = os.path.join (self.finetuned_model_path, new_model_name + ".config.yaml" )
+        with open(inference_config_file_name, "w") as f:
+            yaml.dump(inference_config, f)
+
         job_submission_status = self.job_submission_client (
             submission_id = f"{new_model_name}-{int(datetime.datetime.now().timestamp())}",
             entrypoint=f"cd /home/ubuntu/llm-on-ray; python finetune/finetune.py --config_file {config_file_name}",
@@ -478,11 +501,20 @@ class llmray:
     def remove_finetuned_models (
         self,
         model_name:str,
-        base_model_name: str
+        # base_model_name: str
     ):
-        finetuned_model_path = os.path.join(self.finetuned_model_path, base_model_name, model_name)
-        finetuned_checkpoint_path = os.path.join(self.finetuned_model_path, base_model_name, model_name + "-checkpoint")
         config_file_name = os.path.join (self.finetuned_model_path, model_name + ".yaml" )
+        #check for base model name
+        if os.path.isfile(config_file_name):
+            print ("yaml path exist")
+            with open(config_file_name, "r") as f:                   
+                model_desc = yaml.safe_load (f)
+        else:
+            print ("Model config not found.")
+            return False
+        
+        finetuned_model_path = model_desc ['General']['output_dir']
+        finetuned_checkpoint_path = model_desc ['General']['checkpoint_dir']
 
         #delete from local
         try:
@@ -503,7 +535,7 @@ class llmray:
         finetuned_models = {}
         for yaml_files in os.listdir(self.finetuned_model_path):
 
-            if ".yaml" not in yaml_files: 
+            if ".config.yaml" not in yaml_files: 
                 continue
             yaml_data = yaml.safe_load (
                 open(os.path.join (self.finetuned_model_path, yaml_files), "r")
@@ -527,7 +559,7 @@ class llmray:
                         chat_processor= yaml_data['model_description']['chat_processor'],
                     )
 
-            new_model_name = yaml_files.split(".yaml")[0]
+            new_model_name = yaml_data ['name']
             new_finetuned = FinetunedConfig(
                 name= new_model_name,
                 route_prefix="/" + new_model_name,
