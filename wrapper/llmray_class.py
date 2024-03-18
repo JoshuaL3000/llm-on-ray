@@ -332,19 +332,19 @@ class llmray:
         # last_gpt_base_model = False
         finetuned_model_path = os.path.join(self.finetuned_model_path, model_name, new_model_name)
         finetuned_checkpoint_path = os.path.join(self.finetuned_model_path, model_name, new_model_name + "-checkpoint")
-        #sync the folder location with head
-        try:
-            os.mkdir ("/tmp/ray_rsync/")
-        except:
-            print ("sync with head")
-        rsync_command = f"ray rsync_up {self.cluster_config_yaml} /tmp/ray_rsync/ {finetuned_model_path}" 
-        process = subprocess.Popen (rsync_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-        stdout, stderr = process.communicate()
-        print ("model folder sync status:", stdout)
-        rsync_command = f"ray rsync_up {self.cluster_config_yaml} /tmp/ray_rsync/ {finetuned_checkpoint_path}" 
-        process = subprocess.Popen (rsync_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-        stdout, stderr = process.communicate()
-        print ("checkpoint folder sync status:", stdout)
+        #sync the folder location with head / update: not needed as using EFS
+        # try:
+        #     os.mkdir ("/tmp/ray_rsync/")
+        # except:
+        #     print ("sync with head")
+        # rsync_command = f"ray rsync_up {self.cluster_config_yaml} /tmp/ray_rsync/ {finetuned_model_path}" 
+        # process = subprocess.Popen (rsync_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        # stdout, stderr = process.communicate()
+        # print ("model folder sync status:", stdout)
+        # rsync_command = f"ray rsync_up {self.cluster_config_yaml} /tmp/ray_rsync/ {finetuned_checkpoint_path}" 
+        # process = subprocess.Popen (rsync_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        # stdout, stderr = process.communicate()
+        # print ("checkpoint folder sync status:", stdout)
 
         finetune_config = self.config.copy()       
         
