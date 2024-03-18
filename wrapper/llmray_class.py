@@ -19,6 +19,7 @@ import yaml
 import subprocess
 import requests
 import datetime
+import shutil
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from inference.inference_config import all_models, ModelDescription, Prompt
@@ -485,8 +486,8 @@ class llmray:
 
         #delete from local
         try:
-            os.rmdir (finetuned_model_path)
-            os.rmdir (finetuned_checkpoint_path)
+            shutil.rmtree (finetuned_model_path)
+            shutil.rmtree (finetuned_checkpoint_path)
             os.remove (config_file_name)
             return True
 
