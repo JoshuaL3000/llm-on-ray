@@ -863,125 +863,25 @@ class llmray:
         for output in bot_generator:
             yield output
 
+    # @staticmethod
+#     llm.generate_rag_vector_store (
+#     vector_store_name = "/home/ubuntu/llmray_easydata/user1/rag_vector_stores/test_rag_456",
+#     data_path="/home/ubuntu/llmray_easydata/user1/rag_data_dump/testpdf",
+# )
     def generate_rag_vector_store (
-            self, 
-            rag_store_name,
-            upload_type, #Youtube, Web, local
-            input_type, #local
-            input_texts, #folder path
-            depth = 1,
-            upload_files = "", #empty
-            embedding_model = "sentence-transformers/all-mpnet-base-v2",
-            splitter_chunk_size = 500,
-            cpus_per_worker = 2,
-        ):
-        db_dir = os.path.join (self.default_rag_store_path, rag_store_name)
-
-        if upload_type == "Youtube":
-            input_texts = input_texts.split(";")
-            target_urls = [url.strip() for url in input_texts if url != ""]
-            loader = YoutubeLoader(urls=target_urls)
-        elif upload_type == "Web":
-            input_texts = input_texts.split(";")
-            target_urls = [url.strip() for url in input_texts if url != ""]
-            loader = UrlLoader(urls=target_urls, max_depth=int(depth))
-        else:
-            if input_type == "local":
-                input_texts = input_texts.split(";")
-                target_folders = [folder.strip() for folder in input_texts if folder != ""]
-                info_str = "Load files: "
-                for folder in target_folders:
-                    files = os.listdir(folder)
-                    info_str = info_str + " ".join(files) + " "
-                print (info_str)
-                loader = DirectoryLoader(input_dir=target_folders)
-            else:
-                files_folder = []
-                if upload_files:
-                    for _, file in enumerate(upload_files):
-                        files_folder.append(file.name)
-                    loader = DirectoryLoader(input_files=files_folder)
-                else:
-                    raise Exception("Can't get any uploaded files.")
-
-        if os.path.isabs(db_dir):
-            tmp_folder = os.getcwd()
-            save_dir = os.path.join(tmp_folder, db_dir)
-        else:
-            save_dir = db_dir
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
-
-        vector_store_type = "FAISS"
-        index_name = "knowledge_db"
-        text_splitter = "RecursiveCharacterTextSplitter"
-        splitter_chunk_size = int(splitter_chunk_size)
-        text_splitter_args = {
-            "chunk_size": splitter_chunk_size,
-            "chunk_overlap": 0,
-            "separators": ["\n\n", "\n", " ", ""],
-        }
-        embeddings_type = "HuggingFaceEmbeddings"
-
-        self.embedding_model_name = embedding_model
-        local_embedding_model_path = os.path.join(RECDP_MODELS_CACHE, self.embedding_model_name)
-        if os.path.exists(local_embedding_model_path):
-            self.embeddings = HuggingFaceEmbeddings(model_name=local_embedding_model_path)
-            embeddings_args = {"model_name": local_embedding_model_path}
-        else:
-            self.embeddings = HuggingFaceEmbeddings(model_name=self.embedding_model_name)
-            embeddings_args = {"model_name": self.embedding_model_name}
-
-        print ("starting remote job.")
-        remote_job = ray.remote (self.rag_generate_remote )
-        object_ref = remote_job.remote (
-            loader, 
-            text_splitter, 
-            text_splitter_args, 
-            vector_store_type, 
-            save_dir, 
-            index_name, 
-            embeddings_type, 
-            embeddings_args, 
-            cpus_per_worker
-        )
-        ray.get (object_ref)
-
-        print ("RAG Data path:", db_dir)
-        return db_dir
-
-    #creating a ray remote function for generate RAG
-    @staticmethod                         
-    def rag_generate_remote (
-            loader, 
-            text_splitter, 
-            text_splitter_args, 
-            vector_store_type, 
-            save_dir, 
-            index_name, 
-            embeddings_type, 
-            embeddings_args,
-            cpus_per_worker,
+        self,
+        vector_store_name,
+        data_path
     ):
-            
-        pipeline = TextPipeline()
-        ops = [loader]
-
-        ops.extend(
-            [
-                RAGTextFix(re_sentence=True),
-                DocumentSplit(text_splitter=text_splitter, text_splitter_args=text_splitter_args),
-                DocumentIngestion(
-                    vector_store=vector_store_type,
-                    vector_store_args={"output_dir": save_dir, "index": index_name},
-                    embeddings=embeddings_type,
-                    embeddings_args=embeddings_args,
-                    num_cpus=cpus_per_worker,
-                ),
-            ]
+        job_submission_status = self.job_submission_client (
+            submission_id = f"rag-{int(datetime.datetime.now().timestamp())}",
+            entrypoint=f"cd /home/ubuntu/llm-on-ray/wrapper; python rag.py --rag_store_name {vector_store_name} --data_path {data_path}",
+            metadata = {}
         )
-        pipeline.add_operations(ops)
-        pipeline.execute()
+
+        submission_id = job_submission_status ['submission_id']
+        if job_submission_status ['message'] == "FAIL":
+            raise RuntimeError ("Job submission unsuccessful")   
     
     ##############
     # Profiling
