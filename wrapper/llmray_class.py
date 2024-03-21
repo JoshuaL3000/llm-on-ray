@@ -62,15 +62,6 @@ from pyrecdp.core.cache_utils import RECDP_MODELS_CACHE
 if ("RECDP_CACHE_HOME" not in os.environ) or (not os.environ["RECDP_CACHE_HOME"]):
     os.environ["RECDP_CACHE_HOME"] = "/tmp/"
 
-import socket
-
-def get_client_private_ipv4():
-    # Get the hostname of the current machine
-    hostname = socket.gethostname()
-    # Get the IP address of the current machine
-    ip_address = socket.gethostbyname(hostname)
-    return ip_address
-
 class llmray:
     # def __init__( self, working_directory ):
         #define class input parameter
@@ -595,63 +586,18 @@ class llmray:
             replica_num: int = 1,
             cpus_per_worker_deploy: int = 3
         ):
-        # self.deploy_stop()
 
-        # if cpus_per_worker_deploy * replica_num > int(ray.available_resources()["CPU"]):
-        #     raise Exception("Resources are not meeting the demand")
-
-        print("Deploying model:" + model_name)
-        self.reset_process_tool( model_name )
-
-        self.list_finetuned_models () #update the all_model list with finetune models in user directory
-        finetuned = self._all_models[model_name]
-
-        print ("model to deploy:", finetuned)
-
-        finetuned_deploy = finetuned.copy(deep=True)
-        finetuned_deploy.name = (''.join(random.choices(string.ascii_uppercase + string.digits, k=5)))
-        print ("deploy name:", finetuned_deploy.name)
-
-        finetuned_deploy.route_prefix = "/" + finetuned_deploy.name
-        print ("prefix:", finetuned_deploy.route_prefix)
-        
-        finetuned_deploy.device = "cpu"
-        finetuned_deploy.ipex.precision = "bf16"
-        finetuned_deploy.cpus_per_worker = cpus_per_worker_deploy
-
-        # transformers 4.35 is needed for neural-chat-7b-v3-1, will be fixed later
-        if "neural-chat" in model_name:
-            pip_env = "transformers==4.35.0"
-        elif "fuyu-8b" in model_name:
-            pip_env = "transformers==4.37.2"
-        else:
-            pip_env = "transformers==4.38.1"
-
-        deployment = PredictorDeployment.options(  # type: ignore
-            num_replicas=replica_num,
-            ray_actor_options={
-                "num_cpus": cpus_per_worker_deploy,
-                "runtime_env": {"pip": [pip_env]},
-            },
-        ).bind(finetuned_deploy)
-
-        # print ("ray serve status", serve.status())
-        serve.run(
-            deployment,
-            _blocking=True,
-            port=finetuned_deploy.port,
-            name=finetuned_deploy.name,
-            route_prefix=finetuned_deploy.route_prefix,
-            host = "0.0.0.0"
+        job_submission_status = self.job_submission_client (
+            submission_id = f"deploy-{int(datetime.datetime.now().timestamp())}",
+            entrypoint=f"cd /home/ubuntu/llm-on-ray/wrapper; python deploy_start.py --model_name {model_name} --head_node_ip {self.head_node_ip} --finetuned_model_path {self.finetuned_model_path} --replica_num {replica_num} --cpus_per_worker_deploy {cpus_per_worker_deploy}",
+            metadata = {}
         )
-        # print ("ray serve status", serve.status())
-        endpoint = f"http://{self.head_node_ip}:{finetuned_deploy.port}{finetuned_deploy.route_prefix}"
-
-        # print (serve.status().deployments.message)
+        submission_id = job_submission_status ['submission_id']
+        if job_submission_status ['message'] == "FAIL":
+            raise RuntimeError ("Job submission unsuccessful")   
+        
+        return submission_id
     
-        return endpoint, finetuned_deploy
-
-
     def deploy_stop (self, deploy_name):
         '''
         description: To kill an endpoint
@@ -882,6 +828,8 @@ class llmray:
         submission_id = job_submission_status ['submission_id']
         if job_submission_status ['message'] == "FAIL":
             raise RuntimeError ("Job submission unsuccessful")   
+
+        return submission_id
     
     ##############
     # Profiling
