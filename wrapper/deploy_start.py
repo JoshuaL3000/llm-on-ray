@@ -92,6 +92,7 @@ def list_finetuned_models (finetuned_model_path):
 
 def deploy (
         model_name: str, 
+        deploy_name: str,
         head_node_ip: str,
         finetuned_model_path: str = "",
         replica_num: int = 1,
@@ -111,8 +112,7 @@ def deploy (
     print ("model to deploy:", finetuned)
 
     finetuned_deploy = finetuned.copy(deep=True)
-    finetuned_deploy.name = (''.join(random.choices(string.ascii_uppercase + string.digits, k=5)))
-    finetuned_deploy.name = f"{model_name}-{finetuned_deploy.name}"
+    finetuned_deploy.name = deploy_name
     print ("deploy name:", finetuned_deploy.name)
 
     finetuned_deploy.route_prefix = f"/{finetuned_deploy.name}"
@@ -167,6 +167,13 @@ def main ():
         help="Name of base/finetuned model"
     )
     parser.add_argument(
+        "--deploy_name",
+        type=str,
+        required=True,
+        default=None,
+        help="Model serve endpoint prefix"
+    )
+    parser.add_argument(
         "--head_node_ip",
         type=str,
         required=True,
@@ -196,15 +203,16 @@ def main ():
     )
     args = parser.parse_args()
     model_name = args.model_name
+    deploy_name = args.deploy_name
     head_node_ip = args.head_node_ip
     finetuned_model_path = args.finetuned_model_path
     replica_num = args.replica_num
     cpus_per_worker_deploy = args.cpus_per_worker_deploy
 
-
     print ("deploying jobs..")
     deploy (
         model_name=model_name,
+        deploy_name=deploy_name,
         head_node_ip=head_node_ip,
         finetuned_model_path=finetuned_model_path,
         replica_num=replica_num,
