@@ -18,12 +18,8 @@ accelerate_env_vars = get_accelerate_environment_variable(
 
 ray_init_config["runtime_env"]["env_vars"].update(accelerate_env_vars)
 # ray_init_config["runtime_env"]["working_dir"] = os.path.join("/home/ubuntu/llm-on-ray")
-ray_init_config['address'] = os.getenv ("RAY_ADDRESS_HEAD")
 print("Start to init Ray connection")
 context = ray.init(**ray_init_config)
-print (context)
-print("Ray connected")
-head_node_ip = os.getenv("RAY_ADDRESS_HEAD").split("ray://")[1].split(":")[0]
 
 def get_client_private_ipv4():
     # Get the hostname of the current machine
