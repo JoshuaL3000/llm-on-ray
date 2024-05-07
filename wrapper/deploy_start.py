@@ -73,30 +73,14 @@ def list_finetuned_models (finetuned_model_path):
 
     return _all_models
 
-# def reset_process_tool (model_name):
-#     _all_models = list_finetuned_models () #update the all_model list with finetune models in user directory
-#     finetuned = _all_models[model_name]
-#     model_desc = finetuned.model_description
-#     prompt = model_desc.prompt
-#     if model_desc.chat_processor is not None:
-#         chat_model = getattr(sys.modules[__name__], model_desc.chat_processor, None)
-#         if chat_model is None:
-#             return (
-#                 model_name
-#                 + " deployment failed. "
-#                 + model_desc.chat_processor
-#                 + " does not exist."
-#             )
-#         process_tool = chat_model(**prompt.dict())
-#         return process_tool
-
 def deploy (
         model_name: str, 
         deploy_name: str,
         head_node_ip: str,
         finetuned_model_path: str = "",
         replica_num: int = 1,
-        cpus_per_worker_deploy: int = 3
+        cpus_per_worker_deploy: int = 3,
+        hf_token: str = ""
     ):
     # self.deploy_stop()
 
@@ -121,6 +105,7 @@ def deploy (
     finetuned_deploy.device = "cpu"
     finetuned_deploy.ipex.precision = "bf16"
     finetuned_deploy.cpus_per_worker = cpus_per_worker_deploy
+    finetuned_deploy.model_description.config.use_auth_token = hf_token
 
     # transformers 4.35 is needed for neural-chat-7b-v3-1, will be fixed later
     if "neural-chat" in model_name:
@@ -201,6 +186,13 @@ def main ():
         default=None,
         help="Number of CPUs per replica"
     )
+    parser.add_argument (
+        "--huggingface_token",
+        type=str,
+        required=False,
+        default="",
+        help="Huggingface token to access gated model"
+    )
     args = parser.parse_args()
     model_name = args.model_name
     deploy_name = args.deploy_name
@@ -208,6 +200,7 @@ def main ():
     finetuned_model_path = args.finetuned_model_path
     replica_num = args.replica_num
     cpus_per_worker_deploy = args.cpus_per_worker_deploy
+    hf_token = args.huggingface_token
 
     print ("deploying jobs..")
     deploy (
@@ -216,9 +209,9 @@ def main ():
         head_node_ip=head_node_ip,
         finetuned_model_path=finetuned_model_path,
         replica_num=replica_num,
-        cpus_per_worker_deploy=cpus_per_worker_deploy
+        cpus_per_worker_deploy=cpus_per_worker_deploy,
+        hf_token= hf_token
     )
 
 if __name__=="__main__":
-    print ("*******************")
     main()

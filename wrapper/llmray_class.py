@@ -13,10 +13,7 @@ import requests
 import time
 import os
 import sys
-import string 
-import random
 import yaml
-import subprocess
 import requests
 import datetime
 import shutil
@@ -25,37 +22,17 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from inference.inference_config import all_models, ModelDescription, Prompt
 # print (all_models)
 from inference.inference_config import InferenceConfig as FinetunedConfig
-from inference.chat_process import ChatModelGptJ, ChatModelLLama, ChatModelwithImage  # noqa: F401
-from inference.predictor_deployment import PredictorDeployment
-
+# from inference.chat_process import ChatModelGptJ, ChatModelLLama, ChatModelwithImage  # noqa: F401
 from wrapper.utils import is_simple_api, history_to_messages, add_knowledge, ray_status_parser
 
 import huggingface_hub
 import transformers
 from ray import serve
 import ray
-# from ray.job_submission import JobSubmissionClient
-# import gradio as gr
-# import argparse
-from ray.tune import Stopper
-from ray.train.base_trainer import TrainingFailedError
-from ray.tune.logger import LoggerCallback
-from multiprocessing import Process, Queue
-from ray.util import queue
-# import paramiko
-# from html_format import cpu_memory_html, ray_status_html, custom_css
 from typing import Dict, List, Any
 from langchain.vectorstores import FAISS
 from langchain.embeddings import HuggingFaceEmbeddings
-from pyrecdp.LLM import TextPipeline
-from pyrecdp.primitives.operations import (
-    UrlLoader,
-    DirectoryLoader,
-    DocumentSplit,
-    DocumentIngestion,
-    YoutubeLoader,
-    RAGTextFix,
-)
+
 # from pyrecdp.primitives.document.reader import _default_file_readers
 from pyrecdp.core.cache_utils import RECDP_MODELS_CACHE
 
@@ -80,17 +57,9 @@ class llmray:
         working_dir: str,
         config: dict,
         head_node_ip: str,
-        # node_port: str,
-        # node_user_name: str,
-        # conda_env_name: str,
-        # master_ip_port: str,
-        cluster_config_yaml: str
     ):
         self._all_models = all_models
         self._base_models = base_models
-        self.cluster_config_yaml = cluster_config_yaml
-
-        # print ("all models:", all_models)
 
         #setting all the paths
         self.working_dir = working_dir
@@ -113,12 +82,6 @@ class llmray:
 
         #ray configs
         self.config = config
-        # self.user_name = node_user_name
-        # self.conda_env_name = conda_env_name
-        # self.ray_nodes = ray.nodes()
-        # self.ssh_connect = [None] * (len(self.ray_nodes) + 1)
-        
-        # self.stopper = CustomStopper()
         self.test_replica = 4
         self.bot_queue = list(range(self.test_replica))
         self.messages = [
@@ -324,19 +287,6 @@ class llmray:
         # last_gpt_base_model = False
         finetuned_model_path = os.path.join(self.finetuned_model_path, model_name, new_model_name)
         finetuned_checkpoint_path = os.path.join(self.finetuned_model_path, model_name, new_model_name + "-checkpoint")
-        #sync the folder location with head / update: not needed as using EFS
-        # try:
-        #     os.mkdir ("/tmp/ray_rsync/")
-        # except:
-        #     print ("sync with head")
-        # rsync_command = f"ray rsync_up {self.cluster_config_yaml} /tmp/ray_rsync/ {finetuned_model_path}" 
-        # process = subprocess.Popen (rsync_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-        # stdout, stderr = process.communicate()
-        # print ("model folder sync status:", stdout)
-        # rsync_command = f"ray rsync_up {self.cluster_config_yaml} /tmp/ray_rsync/ {finetuned_checkpoint_path}" 
-        # process = subprocess.Popen (rsync_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-        # stdout, stderr = process.communicate()
-        # print ("checkpoint folder sync status:", stdout)
 
         finetune_config = self.config.copy()       
         
@@ -370,21 +320,6 @@ class llmray:
         config_file_name = os.path.join (self.finetuned_model_path, new_model_name + ".yaml" )
         with open(config_file_name, "w") as f:
             yaml.dump(finetune_config, f)
-        # #sync yaml file to head node
-        # print ("sync yaml file to head node")
-        # rsync_command = f"ray rsync_up {self.cluster_config_yaml} {config_file_name} {config_file_name}" 
-        # process = subprocess.Popen (rsync_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-        # stdout, stderr = process.communicate()
-        # if "Error" in stderr:
-        #     raise RuntimeError ( "Upload config YAML failed:" + str (stderr) )
-        
-        # #sync dataset to head node
-        # print ("sync dataset to head node")
-        # rsync_command = f"ray rsync_up {self.cluster_config_yaml} {dataset_path} {head_dataset_path}" 
-        # process = subprocess.Popen (rsync_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-        # stdout, stderr = process.communicate()
-        # if "Error" in stderr:
-        #     raise RuntimeError ( "Upload dataset failed:" + str (stderr) )
 
         #make inference config yaml
         inference_config = {}
@@ -465,29 +400,6 @@ class llmray:
             return status
         else:
             raise ConnectionError (f"Getting {str(data.status_code)} response from GET requests. \n {str(data.content)}")
-
-    #no support log for now
-    # def get_finetune_job_logs (self, job_id):
-    #     logs = self.client.get_job_logs (job_id)
-    #     print (logs)
-    #     return logs
-    
-    #rsync here to get the model back to server and delete from head node after finetune done
-    def download_finetuned_model_from_ray_head (
-        self,
-        model_name: str, 
-        base_model_name: str,
-    ):
-        finetuned_model_path = os.path.join(self.finetuned_model_path, base_model_name, model_name)
-        #download model
-        rsync_command = f"ray rsync_down {self.cluster_config_yaml} {finetuned_model_path} {finetuned_model_path}" 
-        print (rsync_command)
-        process = subprocess.Popen (rsync_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-        stdout, stderr = process.communicate()
-        if "Error" in stderr:
-            raise RuntimeError ( "Model download failed:" + str (stderr) )
-        else:
-            return "SUCCESS"
 
     def remove_finetuned_models (
         self,
@@ -583,13 +495,20 @@ class llmray:
     def deploy (
             self, 
             model_name: str, 
+            deploy_name: str,
             replica_num: int = 1,
-            cpus_per_worker_deploy: int = 3
+            cpus_per_worker_deploy: int = 3,
+            hf_token: str = "",
         ):
+
+        if hf_token: 
+            entrypoint = f"cd /home/ubuntu/llm-on-ray/wrapper; python deploy_start.py --model_name {model_name} --deploy_name {deploy_name} --head_node_ip {self.head_node_ip} --finetuned_model_path {self.finetuned_model_path} --replica_num {replica_num} --cpus_per_worker_deploy {cpus_per_worker_deploy} --huggingface_token {hf_token}"
+        else:
+            f"cd /home/ubuntu/llm-on-ray/wrapper; python deploy_start.py --model_name {model_name} --deploy_name {deploy_name} --head_node_ip {self.head_node_ip} --finetuned_model_path {self.finetuned_model_path} --replica_num {replica_num} --cpus_per_worker_deploy {cpus_per_worker_deploy}" 
 
         job_submission_status = self.job_submission_client (
             submission_id = f"deploy-{int(datetime.datetime.now().timestamp())}",
-            entrypoint=f"cd /home/ubuntu/llm-on-ray/wrapper; python deploy_start.py --model_name {model_name} --head_node_ip {self.head_node_ip} --finetuned_model_path {self.finetuned_model_path} --replica_num {replica_num} --cpus_per_worker_deploy {cpus_per_worker_deploy}",
+            entrypoint= entrypoint,
             metadata = {}
         )
         submission_id = job_submission_status ['submission_id']
@@ -734,16 +653,7 @@ class llmray:
                                     | Tokens | {token_num} |"""
                 yield [history, new_token_latency]
 
-    def chatbot_rag (self,
-
-        # (please advice on OpenAI-chatbot-like inference implementation)
-
-        # input parameters:
-        #     session_hash
-        #     endpoint
-
-        # return
-                 
+    def chatbot_rag (self,       
         history,
         # deploy_model_endpoint,
         model_endpoint,
@@ -809,11 +719,6 @@ class llmray:
         for output in bot_generator:
             yield output
 
-    # @staticmethod
-#     llm.generate_rag_vector_store (
-#     vector_store_name = "/home/ubuntu/llmray_easydata/user1/rag_vector_stores/test_rag_456",
-#     data_path="/home/ubuntu/llmray_easydata/user1/rag_data_dump/testpdf",
-# )
     def generate_rag_vector_store (
         self,
         vector_store_name,
@@ -836,5 +741,4 @@ class llmray:
     ##############
 
     def resource_monitoring (self):
-
         return ray_status_parser (self.head_node_ip), ray.available_resources(),  ray.cluster_resources()
