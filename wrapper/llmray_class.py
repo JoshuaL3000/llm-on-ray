@@ -504,7 +504,7 @@ class llmray:
         if hf_token: 
             entrypoint = f"cd /home/ubuntu/llm-on-ray/wrapper; python deploy_start.py --model_name {model_name} --deploy_name {deploy_name} --head_node_ip {self.head_node_ip} --finetuned_model_path {self.finetuned_model_path} --replica_num {replica_num} --cpus_per_worker_deploy {cpus_per_worker_deploy} --huggingface_token {hf_token}"
         else:
-            f"cd /home/ubuntu/llm-on-ray/wrapper; python deploy_start.py --model_name {model_name} --deploy_name {deploy_name} --head_node_ip {self.head_node_ip} --finetuned_model_path {self.finetuned_model_path} --replica_num {replica_num} --cpus_per_worker_deploy {cpus_per_worker_deploy}" 
+            entrypoint = f"cd /home/ubuntu/llm-on-ray/wrapper; python deploy_start.py --model_name {model_name} --deploy_name {deploy_name} --head_node_ip {self.head_node_ip} --finetuned_model_path {self.finetuned_model_path} --replica_num {replica_num} --cpus_per_worker_deploy {cpus_per_worker_deploy}" 
 
         job_submission_status = self.job_submission_client (
             submission_id = f"deploy-{int(datetime.datetime.now().timestamp())}",
