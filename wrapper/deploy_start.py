@@ -2,13 +2,14 @@ import random, string, os, sys, argparse, socket
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 import ray
 from ray import serve
+from pydantic_yaml import parse_yaml_raw_as
 
 from typing import Dict
 
 import yaml
 from configs import finetune_config, ray_init_config
 from finetune.finetune import get_accelerate_environment_variable
-from inference.inference_config import all_models, ModelDescription, Prompt
+from inference.inference_config import all_models, ModelDescription, Prompt, InferenceConfig
 from inference.inference_config import InferenceConfig as FinetunedConfig
 from inference.predictor_deployment import PredictorDeployment
 
@@ -17,6 +18,7 @@ accelerate_env_vars = get_accelerate_environment_variable(
 )
 
 ray_init_config["runtime_env"]["env_vars"].update(accelerate_env_vars)
+print ( ray_init_config["address"] )
 # ray_init_config["runtime_env"]["working_dir"] = os.path.join("/home/ubuntu/llm-on-ray")
 print("Start to init Ray connection")
 context = ray.init(**ray_init_config)
@@ -28,9 +30,23 @@ def get_client_private_ipv4():
     ip_address = socket.gethostbyname(hostname)
     return ip_address
 
-def list_finetuned_models (finetuned_model_path):
+def list_finetuned_models (finetuned_model_path, new_base_model_path):
 
     _all_models: Dict[str, FinetunedConfig] = {k: all_models[k] for k in sorted(all_models.keys())}
+    _models: Dict[str, InferenceConfig] = {}
+
+    if new_base_model_path:
+        for model_file in os.listdir(new_base_model_path):
+            file_path = new_base_model_path + "/" + model_file
+            if os.path.isdir(file_path):
+                continue
+            with open(file_path, "r") as f:
+                m: InferenceConfig = parse_yaml_raw_as(InferenceConfig, f)
+                _models[m.name] = m
+
+        _all_models.update (_models)
+        print ("update all model")
+        print (_all_models)
 
     finetuned_models = {}
     for yaml_files in os.listdir(finetuned_model_path):
@@ -78,6 +94,7 @@ def deploy (
         deploy_name: str,
         head_node_ip: str,
         finetuned_model_path: str = "",
+        custom_model_path: str = "",
         replica_num: int = 1,
         cpus_per_worker_deploy: int = 3,
         hf_token: str = ""
@@ -88,8 +105,9 @@ def deploy (
     #     raise Exception("Resources are not meeting the demand")
 
     print("Deploying model:" + model_name)
+    print ("custom model path:", custom_model_path)
     # process_tool = reset_process_tool( model_name )
-    _all_models = list_finetuned_models (finetuned_model_path) #update the all_model list with finetune models in user directory
+    _all_models = list_finetuned_models (finetuned_model_path, custom_model_path) #update the all_model list with finetune models in user directory
     #for m in _all_models: print (m) 
     finetuned = _all_models[model_name]
 
@@ -170,7 +188,14 @@ def main ():
         type=str,
         required=False,
         default=None,
-        help="finetuned_model_path"
+        help="finetuned model path"
+    )
+    parser.add_argument (
+        "--custom_model_path",
+        type=str,
+        required = False,
+        default=None,
+        help="custom model config path"
     )
     parser.add_argument(
         "--replica_num",
@@ -198,6 +223,7 @@ def main ():
     deploy_name = args.deploy_name
     head_node_ip = args.head_node_ip
     finetuned_model_path = args.finetuned_model_path
+    custom_model_path = args.custom_model_path
     replica_num = args.replica_num
     cpus_per_worker_deploy = args.cpus_per_worker_deploy
     hf_token = args.huggingface_token
@@ -208,6 +234,7 @@ def main ():
         deploy_name=deploy_name,
         head_node_ip=head_node_ip,
         finetuned_model_path=finetuned_model_path,
+        custom_model_path=custom_model_path,
         replica_num=replica_num,
         cpus_per_worker_deploy=cpus_per_worker_deploy,
         hf_token= hf_token

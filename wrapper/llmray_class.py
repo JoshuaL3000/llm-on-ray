@@ -18,10 +18,12 @@ import requests
 import datetime
 import shutil
 
+from pydantic_yaml import parse_yaml_raw_as
+
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from inference.inference_config import all_models, ModelDescription, Prompt
-# print (all_models)
+from inference.inference_config import ModelDescription, Prompt
 from inference.inference_config import InferenceConfig as FinetunedConfig
+from inference import chat_process
 # from inference.chat_process import ChatModelGptJ, ChatModelLLama, ChatModelwithImage  # noqa: F401
 from wrapper.utils import is_simple_api, history_to_messages, add_knowledge, ray_status_parser
 
@@ -65,8 +67,9 @@ class llmray:
         self.working_dir = working_dir
         # self.base_model_path = "/base_models/"  #not using now
         self.finetuned_model_path = os.path.join (working_dir, "finetuned_models") #everytime after a model is finetuned, we need to output the yaml config to this directory for list models to load.
-        # self.finetuned_checkpoint_path = os.path.join (working_dir, "finetuned_checkpoint") #finetune
-        #self.default_data_path = os.path.join (working_dir, "data_path/data.jsonl") #finetune
+        self.custom_model_path = os.path.join (working_dir, "custom_base_models")
+
+        self.list_custom_base_models ()
         self.default_rag_store_path = os.path.join (working_dir, "rag_vector_stores") #later should be change to argument of regenerate function
 
         #be in this way for now, change later
@@ -101,128 +104,58 @@ class llmray:
     # Finetune
     #################
 
-    def add_base_model (self, input_params):
-        #grey out first in UI
-        '''
-        description: user can add a new base model from huggingface, base model can be shared by different users
+    def add_base_model (
+            self,
+            model_name,
+            model_id,
+            tokenizer_id,
+            gpt_based_model,
+            chat_processor,
+            # new_base_model_config_path,
+            intro = "",
+            human_id = "",
+            bot_id = "",
+            stop_words = []
+        ):
 
-        input parameters:
-            model_name: str
-            model_id: str
-            tokenizer_id: str
-            huggingface_token: str
-            config: dict
+        new_model_config = {}
+        new_model_config ['port'] = 8000
+        new_model_config ['name'] = model_name
+        new_model_config ['route_prefix'] = ''
+        new_model_config ['num_replicas'] = 1
+        new_model_config ['cpus_per_worker'] = 16
+        new_model_config ['gpus_per_worker'] = 0
+        new_model_config ['deepspeed'] = False
+        new_model_config ['workers_per_group'] = 1
+        new_model_config ['device'] = "cpu"
+        new_model_config ['ipex'] = {}
+        new_model_config ['ipex']['enabled'] = False
+        new_model_config ['ipex']['precision'] = 'bf16'
+        new_model_config ['model_description'] = {}
+        new_model_config ['model_description']['model_id_or_path'] = model_id
+        new_model_config ['model_description']['tokenizer_name_or_path'] = tokenizer_id
+        new_model_config ['model_description']['gpt_base_model'] = gpt_based_model
+        new_model_config ['model_description']['chat_processor'] = chat_processor
+        new_model_config ['model_description']['prompt'] = {}
+        new_model_config ['model_description']['prompt']["intro"] = intro
+        new_model_config ['model_description']['prompt']['human_id'] = human_id
+        new_model_config ['model_description']['prompt']['bot_id'] = bot_id
+        new_model_config ['model_description']['prompt']['stop_words'] = stop_words
 
-        return:
-           json object
-        '''
+        if not os.path.isdir (self.custom_model_path):
+            os.makedirs (self.custom_model_path)                    
 
-    def download_base_model(self, model_name, base_model_location, token:str=None): #assume base models are saved to .cache/huggingface/hub
-        
-        if token:
-            huggingface_hub.login (token = token)
+        config_file_name = os.path.join (self.custom_model_path, model_name + ".yaml" )
+        with open(config_file_name, "w") as f:
+            yaml.dump(new_model_config, f)
 
-        if model_name not in self._base_models:
-            raise Exception ("Model not found in Base model list")
-        
-        model_desc = self._base_models [model_name]
-        print (model_desc)
-        tokenizer_name_or_path = model_desc.model_description.tokenizer_name_or_path
-        model_id_or_path = model_desc.model_description.model_id_or_path
-        try:
-            model = transformers.AutoModelForCausalLM.from_pretrained(
-                model_id_or_path
-            )
-            tokenizer = transformers.AutoTokenizer.from_pretrained (
-                tokenizer_name_or_path
-            )
+        with open (config_file_name, "r") as f:
+            new_model_config: FinetunedConfig = parse_yaml_raw_as(FinetunedConfig, f)
 
-            #save the model
-            model_location = os.path.join ( base_model_location, model_name )
-            model.save_pretrained (model_location)
+        #reload base model into _base_models
+        self._base_models [model_name] = new_model_config
+        self._all_models [model_name] = new_model_config
 
-            #save tokenizer
-            tokenizer.save_pretrained (model_location)
-
-            #rewrite the location in base model yaml
-            import yaml
-
-            _cur = os.path.dirname(os.path.abspath(__file__))
-            _models_folder = _cur + "/../inference/models"
-        
-            file_path = _models_folder + "/" + model_name + ".yaml"
-            print ("******************")
-            print (file_path)
-            if os.path.isfile(file_path):
-                with open(file_path, "r") as f:                   
-                    model_data = yaml.safe_load (f)
-                model_data ["model_description"]["model_id_or_path"] = model_location
-                model_data ["model_description"]["tokenizer_name_or_path"] = model_location
-
-                with open(file_path, "w") as f:  
-                    yaml.dump (model_data, f)
-            else:
-                raise Exception ("Model Yaml not found.")
-
-            #update _all_models and _base_models
-            self._base_models[model_name].model_description.model_id_or_path = model_location
-            self._base_models[model_name].model_description.tokenizer_name_or_path = model_location
-
-            self._all_models[model_name].model_description.model_id_or_path = model_location
-            self._all_models[model_name].model_description.tokenizer_name_or_path = model_location
-
-            print ( self._base_models[model_name].model_description )
-            print ( self._all_models[model_name].model_description )
-
-        except Exception as err: 
-            print ( "Download fail", str (err ))
-
-    def add_finetuned_model (self, model_name, finetuned_model_location):
-        """
-        create yaml file
-        update _all_model and _finetuned_model
-        
-        """
-
-    def check_local_base_model (self, model_name):
-        # check the yaml file to see the path is correct
-        # if model id or tokenizer id path not found or not tally, will return error
-        model_exist = False
-
-        model_desc = self._base_models [model_name]
-        print (model_desc)
-
-        # tokenizer_name_or_path = model_desc.model_description.tokenizer_name_or_path
-        model_id_or_path = model_desc.model_description.model_id_or_path
-        tokenizer_name_or_path = model_desc.model_description.tokenizer_name_or_path
-
-        import yaml
-        _cur = os.path.dirname(os.path.abspath(__file__))
-        _models_folder = _cur + "/../inference/models"
-    
-        file_path = _models_folder + "/" + model_name + ".yaml"
- 
-        if os.path.isfile(file_path):
-            print ("yaml path exist")
-            with open(file_path, "r") as f:                   
-                model_data = yaml.safe_load (f)
-        # check base model location whether model exist
-                
-            if model_data ["model_description"]["model_id_or_path"] == model_id_or_path and \
-                model_data ["model_description"]["tokenizer_name_or_path"] == tokenizer_name_or_path:
-
-                print ("model yaml config tally with model dict")
-                print (model_id_or_path)
-
-                if os.path.isdir (model_id_or_path) and os.path.isfile ( model_id_or_path + "/config.json"):
-                    
-                    print ("Base model exists in local")
-                    model_exist = True
-
-        return model_exist
-
-        # check _all_model and _base_model dict
-    
     def job_submission_client ( #using this way to avoid double ray init issue
             self,
             submission_id:str, 
@@ -268,6 +201,7 @@ class llmray:
             lr,
             worker_num,
             cpus_per_worker_ftn,
+            #add lora config here
         ):
         # if model_name == "specify other models":
         #     model_desc = None
@@ -279,6 +213,8 @@ class llmray:
         # else:
         
         # head_dataset_path = os.path.join("/home/ubuntu/llm-on-ray/datasets", os.path.basename (dataset_path) )
+        #update models
+        self.list_custom_base_models()
         model_desc = self._base_models[model_name].model_description
         print ("model_desc:",model_desc)
         origin_model_path = model_desc.model_id_or_path
@@ -433,6 +369,25 @@ class llmray:
     ###############
     #Deploy
     ###############
+
+    def list_custom_base_models (self):
+        #update the all model list with user added custom models
+
+        if self.custom_model_path:
+            for yaml_files in os.listdir(self.custom_model_path):
+                if ".yaml" not in yaml_files:
+                    continue
+                # try:
+                with open (os.path.join ( self.custom_model_path, yaml_files) , "r") as f:
+                    new_model_config: FinetunedConfig = parse_yaml_raw_as(FinetunedConfig, f)
+
+                #reload base model into _base_models
+                self._base_models [new_model_config.name] = new_model_config
+                self._all_models [new_model_config.name] = new_model_config
+                # except:
+                #     print (f"{yaml_files} is not a valid model config.")
+
+
     def list_finetuned_models (self):
 
         finetuned_models = {}
@@ -471,26 +426,34 @@ class llmray:
             finetuned_models[new_model_name] = new_finetuned
             self._all_models[new_model_name] = new_finetuned
 
-        for model in self._all_models:
-            print (model)
+        print (self._all_models.keys())
 
         return finetuned_models
          
     def reset_process_tool (self, model_name):
+        self.list_custom_base_models ()
         self.list_finetuned_models () #update the all_model list with finetune models in user directory
         finetuned = self._all_models[model_name]
+
         model_desc = finetuned.model_description
         prompt = model_desc.prompt
+
         if model_desc.chat_processor is not None:
-            chat_model = getattr(sys.modules[__name__], model_desc.chat_processor, None)
-            if chat_model is None:
-                return (
-                    model_name
-                    + " deployment failed. "
-                    + model_desc.chat_processor
-                    + " does not exist."
-                )
-            self.process_tool = chat_model(**prompt.dict())
+            chat_model = getattr(chat_process, model_desc.chat_processor, None)
+        else: 
+            print(f"Unable to find finetuned model in path. Using unmodified prompt")
+            chat_processor = "ChatModelGptJ"
+            prompt = {'intro': '', 'human_id': '', 'bot_id': '', 'stop_words': []}
+            chat_model = getattr(chat_process, chat_processor, None)
+
+        if chat_model is None:
+            return (
+                model_name
+                + " deployment failed. "
+                + chat_processor
+                + " does not exist."
+            )
+        self.process_tool = chat_model(**prompt.dict())
 
     def deploy (
             self, 
@@ -502,9 +465,9 @@ class llmray:
         ):
 
         if hf_token: 
-            entrypoint = f"cd /home/ubuntu/llm-on-ray/wrapper; python deploy_start.py --model_name {model_name} --deploy_name {deploy_name} --head_node_ip {self.head_node_ip} --finetuned_model_path {self.finetuned_model_path} --replica_num {replica_num} --cpus_per_worker_deploy {cpus_per_worker_deploy} --huggingface_token {hf_token}"
+            entrypoint = f"cd /home/ubuntu/llm-on-ray/wrapper; python deploy_start.py --model_name {model_name} --deploy_name {deploy_name} --head_node_ip {self.head_node_ip} --finetuned_model_path {self.finetuned_model_path} --custom_model_path {self.custom_model_path} --replica_num {replica_num} --cpus_per_worker_deploy {cpus_per_worker_deploy} --huggingface_token {hf_token}"
         else:
-            entrypoint = f"cd /home/ubuntu/llm-on-ray/wrapper; python deploy_start.py --model_name {model_name} --deploy_name {deploy_name} --head_node_ip {self.head_node_ip} --finetuned_model_path {self.finetuned_model_path} --replica_num {replica_num} --cpus_per_worker_deploy {cpus_per_worker_deploy}" 
+            entrypoint = f"cd /home/ubuntu/llm-on-ray/wrapper; python deploy_start.py --model_name {model_name} --deploy_name {deploy_name} --head_node_ip {self.head_node_ip} --finetuned_model_path {self.finetuned_model_path} --custom_model_path {self.custom_model_path} --replica_num {replica_num} --cpus_per_worker_deploy {cpus_per_worker_deploy}" 
 
         job_submission_status = self.job_submission_client (
             submission_id = f"deploy-{int(datetime.datetime.now().timestamp())}",
@@ -548,7 +511,6 @@ class llmray:
     # def
         
     def model_generate(self, prompt, request_url, model_name, config, simple_api=True):
-
         self.reset_process_tool (model_name)
         if simple_api:
             prompt = self.process_tool.get_prompt(prompt)
@@ -636,6 +598,7 @@ class llmray:
 
         if history[-1][1] is None:
             history[-1][1] = ""
+
         for output in outputs:
             if len(output) != 0:
                 time_end = time.time()
@@ -716,6 +679,7 @@ class llmray:
             image=image,
             enhance_knowledge=enhance_knowledge,
         )
+        
         for output in bot_generator:
             yield output
 
