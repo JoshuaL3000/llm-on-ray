@@ -8,8 +8,10 @@ from predictor import Predictor
 
 class TransformerPredictor(Predictor):
     def __init__(self, infer_conf: InferenceConfig):
+        print ("##############TRANSFORMER PREDICTOR##############")
         super().__init__(infer_conf)
         model_desc = infer_conf.model_description
+        print (model_desc)
         model_config = model_desc.config
         hf_config = AutoConfig.from_pretrained(
             model_desc.model_id_or_path,
@@ -50,7 +52,10 @@ class TransformerPredictor(Predictor):
                 low_cpu_mem_usage=True,
                 **model_config.dict(),
             )
+        print ("##########INITIAL MODEL PARAMS###########")
+        print (model)
         if model_desc.peft_model_id_or_path:
+            print ("############ PEFT MODEL PARAMS ############")
             from peft import PeftModel
 
             model = PeftModel.from_pretrained(
@@ -63,6 +68,9 @@ class TransformerPredictor(Predictor):
 
                 model = DeltaTunerModel.from_pretrained(model, model_desc.peft_model_id_or_path)
             model = model.merge_and_unload()
+
+            print ("############ PEFT MODEL PARAMS ############")
+            print (model)
 
         model = model.eval().to(self.device)
         if self.device.type == "hpu":

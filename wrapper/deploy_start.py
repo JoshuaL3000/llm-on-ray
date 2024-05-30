@@ -97,15 +97,14 @@ def deploy (
         custom_model_path: str = "",
         replica_num: int = 1,
         cpus_per_worker_deploy: int = 3,
-        hf_token: str = ""
+        hf_token: str = "",
+        config_file: str = ""
     ):
     # self.deploy_stop()
 
-    # if cpus_per_worker_deploy * replica_num > int(ray.available_resources()["CPU"]):
-    #     raise Exception("Resources are not meeting the demand")
-
     print("Deploying model:" + model_name)
     print ("custom model path:", custom_model_path)
+
     # process_tool = reset_process_tool( model_name )
     _all_models = list_finetuned_models (finetuned_model_path, custom_model_path) #update the all_model list with finetune models in user directory
     #for m in _all_models: print (m) 
@@ -113,7 +112,14 @@ def deploy (
 
     print ("model to deploy:", finetuned)
 
-    finetuned_deploy = finetuned.copy(deep=True)
+    # if cpus_per_worker_deploy * replica_num > int(ray.available_resources()["CPU"]):
+    #     raise Exception("Resources are not meeting the demand")
+    if config_file:
+        with open (config_file, "r") as f:
+            finetuned_deploy = parse_yaml_raw_as (InferenceConfig,f)
+    else: 
+        finetuned_deploy = finetuned.copy(deep=True)
+
     finetuned_deploy.name = deploy_name
     print ("deploy name:", finetuned_deploy.name)
 
@@ -124,6 +130,8 @@ def deploy (
     finetuned_deploy.ipex.precision = "bf16"
     finetuned_deploy.cpus_per_worker = cpus_per_worker_deploy
     finetuned_deploy.model_description.config.use_auth_token = hf_token
+
+    print ("Inference Config:", finetuned_deploy)
 
     # transformers 4.35 is needed for neural-chat-7b-v3-1, will be fixed later
     if "neural-chat" in model_name:
@@ -218,6 +226,13 @@ def main ():
         default="",
         help="Huggingface token to access gated model"
     )
+
+    parser.add_argument (
+        "--config_file",
+        type=str,
+        required=False,
+        default = "",
+    )
     args = parser.parse_args()
     model_name = args.model_name
     deploy_name = args.deploy_name
@@ -227,6 +242,7 @@ def main ():
     replica_num = args.replica_num
     cpus_per_worker_deploy = args.cpus_per_worker_deploy
     hf_token = args.huggingface_token
+    config_file = args.config_file
 
     print ("deploying jobs..")
     deploy (
@@ -237,7 +253,8 @@ def main ():
         custom_model_path=custom_model_path,
         replica_num=replica_num,
         cpus_per_worker_deploy=cpus_per_worker_deploy,
-        hf_token= hf_token
+        hf_token= hf_token,
+        config_file = config_file
     )
 
 if __name__=="__main__":
