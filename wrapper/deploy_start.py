@@ -35,7 +35,7 @@ def list_finetuned_models (finetuned_model_path, new_base_model_path):
     _all_models: Dict[str, FinetunedConfig] = {k: all_models[k] for k in sorted(all_models.keys())}
     _models: Dict[str, InferenceConfig] = {}
 
-    if new_base_model_path:
+    if new_base_model_path and os.path.exists(new_base_model_path):
         for model_file in os.listdir(new_base_model_path):
             file_path = new_base_model_path + "/" + model_file
             if os.path.isdir(file_path):
